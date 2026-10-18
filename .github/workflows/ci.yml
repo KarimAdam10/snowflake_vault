@@ -1,4 +1,5 @@
 name: CI
+
 # Se ejecuta en cada pull request hacia dev o prod. No abre ninguna conexión a Snowflake.
 # Los nombres de los jobs (dbt-parse, docker) son los checks obligatorios de los rulesets.
 on:
