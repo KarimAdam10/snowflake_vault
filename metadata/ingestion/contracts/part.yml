@@ -1,0 +1,20 @@
+entity: part
+source:
+  file_pattern: "part.csv"
+  format: csv
+  delimiter: ","
+  header: true
+target:
+  landing_table: LND_PART
+load:
+  type: snapshot            # snapshot | incremental
+columns:
+  - {name: p_partkey,     type: NUMBER}
+  - {name: p_name,        type: VARCHAR}
+  - {name: p_mfgr,        type: VARCHAR}
+  - {name: p_brand,       type: VARCHAR}
+  - {name: p_type,        type: VARCHAR}
+  - {name: p_size,        type: NUMBER}
+  - {name: p_container,   type: VARCHAR}
+  - {name: p_retailprice, type: "NUMBER(12,2)"}
+  - {name: p_comment,     type: VARCHAR}

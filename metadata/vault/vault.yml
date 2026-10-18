@@ -1,0 +1,41 @@
+# Metadatos del Data Vault. Fuente de verdad del modelo; de aquí se generan los modelos dbt.
+# Los nombres de columna son los de los contratos de ingesta (metadata/ingestion/contracts/<entidad>.yml).
+#
+#   hubs:             una clave de negocio.        hub_x: {source: <entidad>, key: [columnas]}
+#   links:            relación entre hubs.         lnk_x: {source: <entidad>, hubs: {hub: [columnas fk]}, child_key: [...]}
+#   satellites:       atributos con historial.     sat_x: {parent: <hub|link>, source: <entidad>}
+#                     payload por defecto = columnas de la entidad que no son claves ni fk.
+#   reference_tables: catálogos de códigos.        ref_x: {source: <entidad>, key: [columnas]}
+#                     sin hash key ni satélite; guarda la primera versión de cada código.
+# Regla: una entidad alimenta como mucho un satélite.
+# Decisión: docs/decision_reference_tables.md (nation y region son catálogos, no entidades de negocio).
+
+hubs:
+  hub_customer: {source: customer, key: [c_custkey]}
+  hub_supplier: {source: supplier, key: [s_suppkey]}
+  hub_part:     {source: part,     key: [p_partkey]}
+  hub_order:    {source: orders,   key: [o_orderkey]}
+
+links:
+  lnk_order_customer:
+    source: orders
+    hubs: {hub_order: [o_orderkey], hub_customer: [o_custkey]}
+  lnk_partsupp:
+    source: partsupp
+    hubs: {hub_part: [ps_partkey], hub_supplier: [ps_suppkey]}
+  lnk_lineitem:
+    source: lineitem
+    hubs: {hub_order: [l_orderkey], hub_part: [l_partkey], hub_supplier: [l_suppkey]}
+    child_key: [l_linenumber]      # clave hija: identifica la línea dentro del pedido
+
+satellites:
+  sat_customer:      {parent: hub_customer, source: customer}   # incluye c_nationkey como atributo
+  sat_supplier:      {parent: hub_supplier, source: supplier}   # incluye s_nationkey como atributo
+  sat_part:          {parent: hub_part,     source: part}
+  sat_order:         {parent: hub_order,    source: orders}
+  sat_lnk_partsupp:  {parent: lnk_partsupp, source: partsupp}
+  sat_lnk_lineitem:  {parent: lnk_lineitem, source: lineitem}
+
+reference_tables:
+  ref_region: {source: region, key: [r_regionkey]}
+  ref_nation: {source: nation, key: [n_nationkey]}   # n_regionkey es un atributo más

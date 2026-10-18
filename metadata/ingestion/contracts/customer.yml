@@ -1,0 +1,19 @@
+entity: customer
+source:
+  file_pattern: "customer.csv"
+  format: csv
+  delimiter: ","
+  header: true
+target:
+  landing_table: LND_CUSTOMER
+load:
+  type: snapshot            # snapshot | incremental
+columns:
+  - {name: c_custkey,    type: NUMBER}
+  - {name: c_name,       type: VARCHAR}
+  - {name: c_address,    type: VARCHAR}
+  - {name: c_nationkey,  type: NUMBER}
+  - {name: c_phone,      type: VARCHAR}
+  - {name: c_acctbal,    type: "NUMBER(12,2)"}
+  - {name: c_mktsegment, type: VARCHAR}
+  - {name: c_comment,    type: VARCHAR}

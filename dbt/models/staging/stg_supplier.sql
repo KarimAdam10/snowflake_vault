@@ -1,0 +1,17 @@
+{# Generado por dbt/scripts/generate_models.py. No editar a mano. #}
+{%- set yaml_metadata -%}
+source_model: {landing: LND_SUPPLIER}
+derived_columns: {RECORD_SOURCE: _SOURCE_FILE, LOAD_DATETIME: 'LAST_DAY(TO_DATE(_PERIOD || ''01'', ''YYYYMMDD''))'}
+hashed_columns:
+  SUPPLIER_HK: S_SUPPKEY
+  SUPPLIER_HASHDIFF:
+    is_hashdiff: true
+    columns: [S_NAME, S_ADDRESS, S_NATIONKEY, S_PHONE, S_ACCTBAL, S_COMMENT]
+{%- endset -%}
+
+{% set metadata_dict = fromyaml(yaml_metadata) %}
+
+{{ automate_dv.stage(include_source_columns=true,
+                     source_model=metadata_dict['source_model'],
+                     derived_columns=metadata_dict['derived_columns'],
+                     hashed_columns=metadata_dict['hashed_columns']) }}

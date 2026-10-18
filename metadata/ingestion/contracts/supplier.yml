@@ -1,0 +1,18 @@
+entity: supplier
+source:
+  file_pattern: "supplier.csv"
+  format: csv
+  delimiter: ","
+  header: true
+target:
+  landing_table: LND_SUPPLIER
+load:
+  type: snapshot            # snapshot | incremental
+columns:
+  - {name: s_suppkey,   type: NUMBER}
+  - {name: s_name,      type: VARCHAR}
+  - {name: s_address,   type: VARCHAR}
+  - {name: s_nationkey, type: NUMBER}
+  - {name: s_phone,     type: VARCHAR}
+  - {name: s_acctbal,   type: "NUMBER(12,2)"}
+  - {name: s_comment,   type: VARCHAR}

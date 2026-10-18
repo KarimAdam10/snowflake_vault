@@ -1,0 +1,15 @@
+entity: nation
+source:
+  file_pattern: "nation.csv"
+  format: csv
+  delimiter: ","
+  header: true
+target:
+  landing_table: LND_NATION
+load:
+  type: snapshot            # snapshot | incremental
+columns:
+  - {name: n_nationkey, type: NUMBER}
+  - {name: n_name,      type: VARCHAR}
+  - {name: n_regionkey, type: NUMBER}
+  - {name: n_comment,   type: VARCHAR}

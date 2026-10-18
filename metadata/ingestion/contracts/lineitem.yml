@@ -1,0 +1,27 @@
+entity: lineitem
+source:
+  file_pattern: "lineitem.csv"
+  format: csv
+  delimiter: ","
+  header: true
+target:
+  landing_table: LND_LINEITEM
+load:
+  type: incremental            # snapshot | incremental
+columns:
+  - {name: l_orderkey,      type: NUMBER}
+  - {name: l_partkey,       type: NUMBER}
+  - {name: l_suppkey,       type: NUMBER}
+  - {name: l_linenumber,    type: NUMBER}
+  - {name: l_quantity,      type: "NUMBER(12,2)"}
+  - {name: l_extendedprice, type: "NUMBER(12,2)"}
+  - {name: l_discount,      type: "NUMBER(5,2)"}
+  - {name: l_tax,           type: "NUMBER(5,2)"}
+  - {name: l_returnflag,    type: VARCHAR}
+  - {name: l_linestatus,    type: VARCHAR}
+  - {name: l_shipdate,      type: DATE}
+  - {name: l_commitdate,    type: DATE}
+  - {name: l_receiptdate,   type: DATE}
+  - {name: l_shipinstruct,  type: VARCHAR}
+  - {name: l_shipmode,      type: VARCHAR}
+  - {name: l_comment,       type: VARCHAR}

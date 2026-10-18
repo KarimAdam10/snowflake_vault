@@ -1,0 +1,21 @@
+# Secretos y entorno
+.env
+keys/*
+!keys/.gitkeep
+*.p8
+*.pem
+
+# Airflow
+airflow/logs/*
+!airflow/logs/.gitkeep
+__pycache__/
+*.pyc
+
+# dbt
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
+
+# Datos de entrada (zips y CSV)
+data/landing/*
+!data/landing/.gitkeep

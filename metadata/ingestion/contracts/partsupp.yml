@@ -1,0 +1,16 @@
+entity: partsupp
+source:
+  file_pattern: "partsupp.csv"
+  format: csv
+  delimiter: ","
+  header: true
+target:
+  landing_table: LND_PARTSUPP
+load:
+  type: snapshot            # snapshot | incremental
+columns:
+  - {name: ps_partkey,    type: NUMBER}
+  - {name: ps_suppkey,    type: NUMBER}
+  - {name: ps_availqty,   type: NUMBER}
+  - {name: ps_supplycost, type: "NUMBER(12,2)"}
+  - {name: ps_comment,    type: VARCHAR}

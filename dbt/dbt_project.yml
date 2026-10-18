@@ -1,0 +1,27 @@
+name: dv_pipeline
+version: "0.1.0"
+config-version: 2
+profile: dv_snowflake
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+# Capas: staging (vistas) -> raw_vault (histórico) -> business_vault (reglas, vistas) -> mart (tablas)
+models:
+  dv_pipeline:
+    staging:
+      +materialized: view
+      +schema: staging
+    raw_vault:
+      +materialized: incremental
+      +schema: raw_vault
+    business_vault:
+      +materialized: view
+      +schema: business_vault
+    mart:
+      +materialized: table
+      +schema: mart

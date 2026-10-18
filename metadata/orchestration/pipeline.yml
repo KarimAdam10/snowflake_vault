@@ -1,0 +1,69 @@
+# Metadatos de orquestación: de aquí se generan los DAGs de Airflow (airflow/dags/dv_pipelines.py).
+# Cambiar este fichero cambia el pipeline sin tocar código: el dag-processor de Airflow lo vuelve a
+# leer en su siguiente refresco.
+#
+# El flujo y sus dependencias se declaran aquí; las tareas de carga a LANDING se generan una por
+# contrato (metadata/ingestion/contracts/<entidad>.yml); sus reintentos y timeout se declaran aquí, en
+# `entities`. De dónde sale cada lote se define en metadata/ingestion/source.yml.
+
+# Valores por defecto de las tareas; `entities` los sobrescribe para la carga de cada entidad.
+defaults:
+  retries: 1
+  retry_delay_minutes: 1
+
+# Reintentos y timeout de la tarea que carga cada entidad a LANDING (una por contrato).
+entities:
+  customer: {retries: 2, retry_delay_minutes: 1}
+  lineitem: {retries: 2, retry_delay_minutes: 1, execution_timeout_minutes: 10}
+  nation: {retries: 2, retry_delay_minutes: 1}
+  orders: {retries: 2, retry_delay_minutes: 1}
+  part: {retries: 2, retry_delay_minutes: 1}
+  partsupp: {retries: 2, retry_delay_minutes: 1}
+  region: {retries: 2, retry_delay_minutes: 1}
+  supplier: {retries: 2, retry_delay_minutes: 1}
+
+# Etapas disponibles. `type` decide qué hace; `depends_on` son sus dependencias (solo se respetan
+# las que pertenezcan al pipeline que las usa).
+stages:
+  extract:
+    type: extract_archive            # descomprime el zip del periodo y comprueba que están todos los ficheros
+  landing:
+    type: load_landing               # una tarea por contrato: CSV -> LANDING (último lote)
+    depends_on: [extract]
+  generate_models:
+    type: generate_models            # regenera los modelos dbt desde metadata/ (transformación dirigida por metadatos)
+  # Cada etapa dbt ejecuta `dbt build` de su capa (modelos + tests). Los tests que dependen de capas
+  # posteriores (aún sin reconstruir) se excluyen solos: la factoría deduce qué capas están aguas abajo.
+  dbt_staging:
+    type: dbt
+    select: staging
+    depends_on: [landing, generate_models]
+  dbt_raw_vault:
+    type: dbt
+    select: raw_vault
+    depends_on: [dbt_staging]
+  dbt_business_vault:
+    type: dbt
+    select: business_vault
+    depends_on: [dbt_raw_vault]
+  dbt_mart:
+    type: dbt
+    select: mart
+    depends_on: [dbt_business_vault]
+  cleanup:
+    type: cleanup                    # borra los ficheros temporales aunque alguna etapa haya fallado
+    teardown_for: extract            # teardown de Airflow: se ejecuta siempre, pero no oculta un fallo anterior
+    depends_on: [landing, dbt_mart]
+
+# Pipelines = DAGs de Airflow. Cada uno es una selección de etapas.
+pipelines:
+  dv_end_to_end:
+    description: "Lote completo: zip -> LANDING -> STAGING -> RAW_VAULT -> BUSINESS_VAULT -> MART"
+    schedule: null
+    tags: [end-to-end]
+    stages: [extract, landing, generate_models, dbt_staging, dbt_raw_vault, dbt_business_vault, dbt_mart, cleanup]
+  dv_landing_only:
+    description: "Solo ingesta: zip -> LANDING (sustituye al último lote)"
+    schedule: null
+    tags: [ingestion]
+    stages: [extract, landing, cleanup]

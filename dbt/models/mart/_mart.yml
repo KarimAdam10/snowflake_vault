@@ -1,0 +1,125 @@
+version: 2
+
+# Tests del mart. Un hecho tiene el mismo número de filas que su grano (así no se pierde ningún registro
+# al resolver dimensiones) y cada clave de dimensión y de fecha existe en su tabla.
+# Las dimensiones SCD2 no solapan versiones de una misma clave ni dejan huecos, y tienen una sola vigente.
+
+models:
+  - name: dim_date
+    columns:
+      - name: DATE_KEY
+        data_tests: [unique, not_null]
+
+  - name: dim_customer
+    columns:
+      - name: CUSTOMER_SK
+        data_tests: [unique, not_null]
+      - name: CUSTOMER_HK
+        data_tests: [not_null]
+    data_tests:
+      - dbt_utils.mutually_exclusive_ranges:
+          arguments: {lower_bound_column: VALID_FROM, upper_bound_column: VALID_TO, partition_by: CUSTOMER_HK, gaps: not_allowed}
+      - dbt_utils.unique_combination_of_columns:
+          arguments: {combination_of_columns: [CUSTOMER_HK]}
+          config: {where: IS_CURRENT}
+
+  - name: dim_supplier
+    columns:
+      - name: SUPPLIER_SK
+        data_tests: [unique, not_null]
+      - name: SUPPLIER_HK
+        data_tests: [not_null]
+    data_tests:
+      - dbt_utils.mutually_exclusive_ranges:
+          arguments: {lower_bound_column: VALID_FROM, upper_bound_column: VALID_TO, partition_by: SUPPLIER_HK, gaps: not_allowed}
+      - dbt_utils.unique_combination_of_columns:
+          arguments: {combination_of_columns: [SUPPLIER_HK]}
+          config: {where: IS_CURRENT}
+
+  - name: dim_part
+    columns:
+      - name: PART_SK
+        data_tests: [unique, not_null]
+      - name: PART_HK
+        data_tests: [not_null]
+    data_tests:
+      - dbt_utils.mutually_exclusive_ranges:
+          arguments: {lower_bound_column: VALID_FROM, upper_bound_column: VALID_TO, partition_by: PART_HK, gaps: not_allowed}
+      - dbt_utils.unique_combination_of_columns:
+          arguments: {combination_of_columns: [PART_HK]}
+          config: {where: IS_CURRENT}
+
+  - name: dim_order
+    columns:
+      - name: ORDER_SK
+        data_tests: [unique, not_null]
+      - name: ORDER_HK
+        data_tests: [not_null]
+    data_tests:
+      - dbt_utils.mutually_exclusive_ranges:
+          arguments: {lower_bound_column: VALID_FROM, upper_bound_column: VALID_TO, partition_by: ORDER_HK, gaps: not_allowed}
+      - dbt_utils.unique_combination_of_columns:
+          arguments: {combination_of_columns: [ORDER_HK]}
+          config: {where: IS_CURRENT}
+
+  - name: fact_lineitem                      # grano: una fila por línea de pedido
+    data_tests:
+      - dbt_utils.equal_rowcount:
+          arguments: {compare_model: ref('lnk_lineitem')}
+    columns:
+      - name: LINEITEM_HK
+        data_tests: [unique, not_null]
+      - name: CUSTOMER_SK
+        data_tests:
+          - not_null
+          - relationships: {arguments: {to: ref('dim_customer'), field: CUSTOMER_SK}}
+      - name: PART_SK
+        data_tests:
+          - not_null
+          - relationships: {arguments: {to: ref('dim_part'), field: PART_SK}}
+      - name: SUPPLIER_SK
+        data_tests:
+          - not_null
+          - relationships: {arguments: {to: ref('dim_supplier'), field: SUPPLIER_SK}}
+      - name: ORDER_SK
+        data_tests:
+          - not_null
+          - relationships: {arguments: {to: ref('dim_order'), field: ORDER_SK}}
+      - name: ORDER_DATE_KEY
+        data_tests:
+          - not_null
+          - relationships: {arguments: {to: ref('dim_date'), field: DATE_KEY}}
+      - name: SHIP_DATE_KEY
+        data_tests:
+          - not_null
+          - relationships: {arguments: {to: ref('dim_date'), field: DATE_KEY}}
+      - name: COMMIT_DATE_KEY
+        data_tests:
+          - not_null
+          - relationships: {arguments: {to: ref('dim_date'), field: DATE_KEY}}
+      - name: RECEIPT_DATE_KEY
+        data_tests:
+          - not_null
+          - relationships: {arguments: {to: ref('dim_date'), field: DATE_KEY}}
+
+  - name: fact_orders                        # grano: una fila por pedido
+    data_tests:
+      - dbt_utils.equal_rowcount:
+          arguments: {compare_model: ref('hub_order')}
+    columns:
+      - name: ORDER_HK
+        data_tests: [unique, not_null]
+      - name: ORDER_SK
+        data_tests:
+          - not_null
+          - relationships: {arguments: {to: ref('dim_order'), field: ORDER_SK}}
+      - name: CUSTOMER_SK
+        data_tests:
+          - not_null
+          - relationships: {arguments: {to: ref('dim_customer'), field: CUSTOMER_SK}}
+      - name: ORDER_DATE_KEY
+        data_tests:
+          - not_null
+          - relationships: {arguments: {to: ref('dim_date'), field: DATE_KEY}}
+      - name: TOTAL_PRICE
+        data_tests: [not_null]

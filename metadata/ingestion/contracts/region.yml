@@ -1,0 +1,14 @@
+entity: region
+source:
+  file_pattern: "region.csv"
+  format: csv
+  delimiter: ","
+  header: true
+target:
+  landing_table: LND_REGION
+load:
+  type: snapshot            # snapshot | incremental
+columns:
+  - {name: r_regionkey, type: NUMBER}
+  - {name: r_name,      type: VARCHAR}
+  - {name: r_comment,   type: VARCHAR}

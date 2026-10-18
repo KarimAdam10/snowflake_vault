@@ -1,0 +1,13 @@
+version: 2
+sources:
+- name: landing
+  schema: LANDING
+  tables:
+  - name: LND_CUSTOMER
+  - name: LND_LINEITEM
+  - name: LND_NATION
+  - name: LND_ORDERS
+  - name: LND_PART
+  - name: LND_PARTSUPP
+  - name: LND_REGION
+  - name: LND_SUPPLIER

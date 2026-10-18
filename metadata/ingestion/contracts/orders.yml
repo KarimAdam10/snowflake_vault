@@ -1,0 +1,20 @@
+entity: orders
+source:
+  file_pattern: "orders.csv"
+  format: csv
+  delimiter: ","
+  header: true
+target:
+  landing_table: LND_ORDERS
+load:
+  type: incremental            # snapshot | incremental
+columns:
+  - {name: o_orderkey,      type: NUMBER}
+  - {name: o_custkey,       type: NUMBER}
+  - {name: o_orderstatus,   type: VARCHAR}
+  - {name: o_totalprice,    type: "NUMBER(12,2)"}
+  - {name: o_orderdate,     type: DATE}
+  - {name: o_orderpriority, type: VARCHAR}
+  - {name: o_clerk,         type: VARCHAR}
+  - {name: o_shippriority,  type: NUMBER}
+  - {name: o_comment,       type: VARCHAR}
