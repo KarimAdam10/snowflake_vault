@@ -1,5 +1,7 @@
 # Airflow 3.x con LocalExecutor + Postgres (sin Celery/Redis: más ligero para la demo).
 # Un único servicio de imagen propia incluye Airflow, dbt (venv) y el código de ingesta.
+#
+# Un clon del repo por entorno (dev, prod), cada uno con su .env: ver docs/cicd.md.
 
 x-airflow-common: &airflow-common
   build:
@@ -60,7 +62,7 @@ services:
     <<: *airflow-common
     command: api-server
     ports:
-      - "8080:8080"
+      - "${AIRFLOW_PORT:-8080}:8080"
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/version"]
       interval: 15s

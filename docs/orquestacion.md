@@ -23,7 +23,7 @@ generate_models ─────────────────────�
 |---|---|
 | `extract` | Localiza el zip del periodo (`{period}_sample*.zip` en `data/`), lo descomprime en un directorio temporal, comprueba que están los 8 ficheros de los contratos y registra su `sha256` |
 | `landing` | Una tarea por contrato: `CSV → LANDING.LND_*`, sustituyendo el lote anterior (landing = último lote) |
-| `generate_models` | Regenera los modelos dbt de staging y Raw Vault desde `metadata/vault/vault.yml`: un cambio de metadatos se aplica en la siguiente ejecución sin tocar código |
+| `generate_models` | Regenera los modelos dbt de staging y Raw Vault desde `metadata/vault/vault.yml`: un cambio de metadatos se aplica en la siguiente ejecución sin tocar código (los modelos generados no se versionan en git) |
 | `dbt_*` | `dbt build` de cada capa (modelos y sus tests). Si una capa falla, las siguientes no se ejecutan. Cada etapa excluye las capas posteriores (deducidas de `depends_on`), para que no ejecute tests que dependen de capas aún sin reconstruir |
 | `cleanup` | Borra los ficheros temporales aunque alguna etapa haya fallado |
 

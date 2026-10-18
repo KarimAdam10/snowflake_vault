@@ -7,6 +7,9 @@ El Business Vault (dbt/models/business_vault) y el mart (dbt/models/mart) son mo
 Para añadir una entidad: contrato + metadatos del vault y volver a ejecutar.
 
 Uso (en el contenedor):  python /opt/dbt/scripts/generate_models.py
+
+Los modelos generados NO se versionan en git (están en .gitignore): cada entorno los genera en la etapa
+`generate_models` del DAG, antes de ejecutar dbt.
 """
 import os
 from pathlib import Path

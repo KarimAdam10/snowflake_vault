@@ -1,9 +1,14 @@
-# Secretos y entorno
-.env
+# Secretos y entorno (cada clon tiene su .env y nunca se sube)
+.env*
 keys/*
 !keys/.gitkeep
 *.p8
 *.pem
+
+# Herramientas locales
+.venv/
+.idea/
+.pytest_cache/
 
 # Airflow
 airflow/logs/*
@@ -11,11 +16,14 @@ airflow/logs/*
 __pycache__/
 *.pyc
 
-# dbt
+# dbt (los modelos de staging y raw_vault los genera el DAG desde metadata/: no se versionan)
+dbt/models/staging/
+dbt/models/raw_vault/
+dbt/tests/*_matches_staging.sql
 dbt/target/
 dbt/dbt_packages/
 dbt/logs/
 
-# Datos de entrada (zips y CSV)
+# Datos de entrada extraídos (los zips de data/ se versionan solo en esta demo; ver docs/cicd.md)
 data/landing/*
 !data/landing/.gitkeep

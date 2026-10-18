@@ -1,0 +1,50 @@
+name: CI
+
+# Se ejecuta en cada pull request hacia dev o prod. No abre ninguna conexión a Snowflake.
+# Los nombres de los jobs (dbt-parse, docker) son los checks obligatorios de los rulesets.
+on:
+  pull_request:
+    branches: [dev, prod]
+
+permissions:
+  contents: read
+
+jobs:
+  dbt-parse:
+    name: dbt-parse
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-dbt.txt
+      - name: Generar staging y Raw Vault desde los metadatos (igual que la etapa generate_models del DAG)
+        run: python dbt/scripts/generate_models.py
+        env:
+          PROJECT_ROOT: ${{ github.workspace }}
+      - name: dbt deps + parse (compila modelos y tests sin conectar a Snowflake)
+        working-directory: dbt
+        env:
+          DBT_PROFILES_DIR: .
+          DBT_SEND_ANONYMOUS_USAGE_STATS: "false"
+          SNOWFLAKE_ACCOUNT: ci-dummy
+          SNOWFLAKE_USER: ci-dummy
+          SNOWFLAKE_ROLE: ci-dummy
+          SNOWFLAKE_WAREHOUSE: ci-dummy
+          SNOWFLAKE_DATABASE: ci-dummy
+        run: |
+          dbt deps
+          dbt parse
+
+  docker:
+    name: docker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Construir la imagen
+        run: docker build -t dv-ci .
+      - name: Los DAGs se importan sin errores
+        run: |
+          docker run --rm -v "$PWD:/opt/project" -e PROJECT_ROOT=/opt/project dv-ci \
+            python -c "import sys; sys.path.insert(0, '/opt/project/airflow/dags'); import dv_pipelines"

@@ -38,16 +38,17 @@ metadata/              Todos los metadatos, una carpeta por tema
   vault/                 vault.yml (hubs, links, satélites y tablas de referencia del Raw Vault)
   orchestration/         pipeline.yml (etapas, dependencias, DAGs, reintentos y timeout por entidad)
 dbt/
-  models/staging|raw_vault   Generados por scripts/generate_models.py (no editar a mano)
+  models/staging|raw_vault   Generados por scripts/generate_models.py en cada ejecución (no se versionan)
   models/business_vault      bsat_lineitem.sql (+ tests)
   models/mart                dim_*.sql, fact_*.sql, dim_date.sql (+ tests)
   macros/                    scd2_dimension, join_scd2, generate_schema_name
   scripts/generate_models.py Genera staging y Raw Vault desde metadata/
   tests/                     Tests singulares generados (ref_*_matches_staging)
 data/                  Un zip por lote: <periodo>_sample*.zip (202512 y 202601)
+.github/               Workflow de CI y rulesets de las ramas `dev` y `prod`
 snowflake/             Reservada para scripts SQL de objetos de Snowflake (vacía)
 keys/                  Clave privada de Snowflake (no se versiona)
-docs/                  Esta documentación
+docs/                  La documentación (menos este README)
 Dockerfile · docker-compose.yml · requirements-*.txt    Entorno local (Airflow + dbt en un virtualenv aparte)
 ```
 
@@ -76,15 +77,17 @@ Resultado esperado tras cargar los dos lotes: hubs de customer, supplier, part y
 
 ## Puesta en marcha (PowerShell, en la raíz del repo)
 
-1. **Configurar `.env`.** No hay `.env.example` en el repositorio; crea `.env` con estas variables (no se versiona):
+Hay dos entornos, dev y prod: dos clones del repo, cada uno con su `.env` y su base de datos (ver [docs/cicd.md](docs/cicd.md)). Lo que sigue vale para cualquiera de los dos.
+
+1. **Configurar `.env`.** No hay fichero de ejemplo en el repositorio; crea `.env` con estas variables (no se versiona):
 
    | Variable | Para qué |
    |---|---|
-   | `SNOWFLAKE_ACCOUNT` (formato `ORG-CUENTA`), `SNOWFLAKE_USER`, `SNOWFLAKE_ROLE`, `SNOWFLAKE_WAREHOUSE`, `SNOWFLAKE_DATABASE` | Conexión; la base de datos y el warehouse deben existir y el rol tener permiso de crear esquemas |
+   | `SNOWFLAKE_ACCOUNT` (formato `ORG-CUENTA`), `SNOWFLAKE_USER`, `SNOWFLAKE_ROLE`, `SNOWFLAKE_WAREHOUSE`, `SNOWFLAKE_DATABASE` | Conexión; la base de datos y el warehouse deben existir y el rol tener permiso de crear esquemas. En dev, `DV_PIPELINE_DEV`; en prod, `DV_PIPELINE_PROD` |
    | `SNOWFLAKE_PASSWORD` **o** `SNOWFLAKE_PRIVATE_KEY_PATH` (+ `SNOWFLAKE_PRIVATE_KEY_PASSPHRASE` si la clave la tiene) | Autenticación. Con par de claves, la ruta es la del contenedor: `/opt/keys/rsa_key.p8` |
    | `SNOWFLAKE_SCHEMA` (opcional) | Esquema por defecto de la conexión (dbt usa `PUBLIC` si falta) |
    | `AIRFLOW_FERNET_KEY`, `AIRFLOW_JWT_SECRET` | Secretos locales de Airflow |
-   | `AIRFLOW_UID`, `AIRFLOW_VERSION` (opcionales) | Por defecto `50000` y `3.3.2` |
+   | `AIRFLOW_UID`, `AIRFLOW_VERSION`, `AIRFLOW_PORT` (opcionales) | Por defecto `50000`, `3.3.2` y `8080`. Pon `AIRFLOW_PORT=8081` en prod si los dos stacks corren a la vez |
 
 2. **Autenticación por par de claves (recomendada).**
    ```bash
@@ -113,9 +116,9 @@ Los DAGs nacen pausados. Deja los zips en `data/` y, en la UI de Airflow, activa
 1. `period = 202512` y `full_refresh = true` (reconstruye el vault desde cero).
 2. Cuando termine, `period = 202601` y `full_refresh = false`.
 
-Solo ingesta (sin transformar): `dv_landing_only`. Detalle de etapas, parámetros y trazabilidad en [orquestacion.md](orquestacion.md).
+Solo ingesta (sin transformar): `dv_landing_only`. Detalle de etapas, parámetros y trazabilidad en [orquestacion.md](docs/orquestacion.md).
 
-Staging y Raw Vault se regeneran en cada ejecución desde `vault.yml` (etapa `generate_models`). A mano, dentro del contenedor:
+Staging y Raw Vault se regeneran en cada ejecución desde `vault.yml` (etapa `generate_models`) y **no se versionan en git** (están en `.gitignore`): lo que se versiona son los metadatos. A mano, dentro del contenedor:
 
 ```powershell
 docker compose exec airflow-scheduler bash -c "python /opt/dbt/scripts/generate_models.py"
@@ -142,11 +145,12 @@ Se ejecutó el flujo real con los dos zips y se comprobó que **todo coincide co
 
 | Documento | Contenido |
 |---|---|
-| [orquestacion.md](orquestacion.md) | DAGs generados desde metadatos, etapas, parámetros, trazabilidad y límites |
-| [raw_vault_model.md](raw_vault_model.md) | Diagrama y convenciones del Raw Vault |
-| [business_vault_y_mart.md](business_vault_y_mart.md) | Business Vault, estrella del mart, decisiones de modelado y verificación |
-| [decision_staging.md](decision_staging.md) | Por qué existe la capa de staging y la alternativa sin ella |
-| [decision_reference_tables.md](decision_reference_tables.md) | Por qué `nation` y `region` son tablas de referencia y no hubs |
+| [orquestacion.md](docs/orquestacion.md) | DAGs generados desde metadatos, etapas, parámetros, trazabilidad y límites |
+| [raw_vault_model.md](docs/raw_vault_model.md) | Diagrama y convenciones del Raw Vault |
+| [business_vault_y_mart.md](docs/business_vault_y_mart.md) | Business Vault, estrella del mart, decisiones de modelado y verificación |
+| [decision_staging.md](docs/decision_staging.md) | Por qué existe la capa de staging y la alternativa sin ella |
+| [decision_reference_tables.md](docs/decision_reference_tables.md) | Por qué `nation` y `region` son tablas de referencia y no hubs |
+| [cicd.md](docs/cicd.md) | Flujo de trabajo dev → prod: ramas, pull requests, CI, configuración de GitHub y alta de los entornos |
 
 ## Límites conocidos
 
@@ -157,7 +161,8 @@ Se ejecutó el flujo real con los dos zips y se comprobó que **todo coincide co
 - **Las claves de negocio de las dimensiones** están escritas en su SQL y también en `vault.yml`: si cambia una, hay que cambiar las dos.
 - **`dim_date`** genera hasta 3660 días desde la fecha mínima; los tests del hecho avisarían si los datos abarcaran más.
 - **Ficheros temporales** (`/tmp/dv_pipeline`) en el disco del contenedor: vale con un único ejecutor local.
-- **Entorno:** el DAG antiguo `01_load_landing` sigue registrado en la base de datos de Airflow aunque su fichero ya no existe. Se puede retirar con `airflow dags delete 01_load_landing`. `data/` no está en `.gitignore`: los zips (unos 20 KB) se versionarían.
+- **Entorno:** el DAG antiguo `01_load_landing` sigue registrado en la base de datos de Airflow aunque su fichero ya no existe. Se puede retirar con `airflow dags delete 01_load_landing`.
+- **Datos en git:** los zips de `data/` se versionan solo porque es una demo con datos de ejemplo y repo público; en un entorno real los datos nunca irían al repositorio.
 
 ## Problemas frecuentes
 
@@ -167,8 +172,9 @@ Se ejecutó el flujo real con los dos zips y se comprobó que **todo coincide co
 | El contenedor se reinicia en bucle | Docker con poca memoria: asigna al menos 4 GB (ideal 8 GB) |
 | `dbt debug` falla en la conexión | Revisa `SNOWFLAKE_ACCOUNT`, que `SNOWFLAKE_DATABASE` exista y, con par de claves, que la clave pública esté asignada al usuario |
 | `390100 Incorrect username or password` | Credenciales distintas dentro del contenedor: tras cambiar `.env`, recrea con `docker compose up -d --force-recreate` |
-| `Creating schema on shared database 'SNOWFLAKE_SAMPLE_DATA' is not allowed` | `SNOWFLAKE_DATABASE` apunta a la base de datos de ejemplo: usa una propia (p. ej. `DV_PIPELINE`) |
+| `Creating schema on shared database 'SNOWFLAKE_SAMPLE_DATA' is not allowed` | `SNOWFLAKE_DATABASE` apunta a la base de datos de ejemplo: usa una propia (p. ej. `DV_PIPELINE_DEV`) |
 | Error de MFA con contraseña | Usa autenticación por par de claves |
+| Tras un `git pull` los DAGs o dbt fallan por una librería | Cambió `Dockerfile` o `requirements-*.txt`: `docker compose up -d --build` |
 | El DAG no aparece | Espera ~10 s (el dag-processor refresca) o revisa `docker compose logs airflow-dag-processor` |
 | El run sale en rojo en una capa dbt | Mira la tarea en Airflow y `CONTROL.PIPELINE_LOG` (qué modelo o test falló y con qué mensaje) |
 
@@ -180,14 +186,13 @@ Lo que queda por hacer, y solo esto, para dejar el proyecto desplegable: el CI/C
 
 ### CI/CD
 
-El repo no tiene ningún pipeline de integración ni de despliegue.
+Implementado el flujo de ramas con CI (ver [docs/cicd.md](docs/cicd.md)). Falta:
 
-- [ ] **Elegir el enfoque.** Propuesta: un servicio `ci` en `docker-compose` con toda la lógica, y un workflow de GitHub Actions de pocas líneas que solo llame a `docker compose run --rm ci`, de modo que local y GitHub ejecuten lo mismo.
-- [ ] **Comprobaciones sin Snowflake** en cada pull request: formato de SQL, YAML y Python; validación de metadatos (contratos, `vault.yml` y `pipeline.yml` coherentes); regenerar staging y Raw Vault y fallar si difieren de lo versionado; importar los DAGs sin errores; `dbt parse`; tests del cargador (extracción del zip, comprobación de contenido).
-- [ ] **Integración contra Snowflake**: esquema efímero por ejecución, cargar los dos zips, `dbt build` y borrar el esquema. Los zips sirven de datos de prueba.
+- [ ] **Aplicar la configuración de GitHub** (renombrar `main` a `dev`, crear `prod`, importar los rulesets) y dar de alta el clon de prod: está descrito, pero son pasos manuales.
+- [ ] **Integración contra Snowflake**: base de datos efímera por ejecución, cargar los dos zips, `dbt build` y borrarla. Requiere un rol de CI acotado y secretos en GitHub.
 - [ ] **Convertir en tests automáticos la verificación independiente** contra los CSV (recuentos, importes, versiones SCD2). Hoy son scripts fuera del repositorio.
-- [ ] **Despliegue:** construir la imagen con `dbt deps` incluido y versiones fijadas, publicarla (p. ej. en GitHub Container Registry) y desplegar por entornos con aprobación manual antes de producción. Secretos en *GitHub Secrets/Environments*.
-- [ ] **Reproducibilidad:** fijar versiones en `requirements-airflow.txt` (hoy sin fijar), retirar `jsonschema` (ya no se usa), crear `.env.example` y revisar `.gitignore` (zips de `data/`, carpeta `.claude/`).
+- [ ] **Publicar la imagen** (p. ej. en GitHub Container Registry) en lugar de construirla en cada clon.
+- [ ] **Datos fuera del repo** en un entorno real (ver límites conocidos).
 
 ### Permisos, roles y objetos de Snowflake
 
@@ -197,6 +202,6 @@ Hoy todo se ejecuta con el rol y el warehouse del `.env` (en la cuenta de prueba
 - [ ] **Usuarios de servicio** para Airflow y para CI con autenticación por par de claves, sin contraseñas ni MFA interactivo, y rotación de claves.
 - [ ] **Permisos futuros** (`FUTURE TABLES/VIEWS IN SCHEMA`) para que los objetos nuevos que cree dbt hereden los permisos.
 - [ ] **Warehouses por carga de trabajo** (ingesta, transformación, consulta), de tamaño mínimo, con suspensión automática y un *resource monitor*.
-- [ ] **Bases de datos por entorno** (desarrollo, pruebas, producción) y esquemas efímeros (o clones) para CI.
+- [ ] **Separar los permisos de dev y prod.** `DV_PIPELINE_DEV` y `DV_PIPELINE_PROD` ya existen. Cada stack solo llega a la base de su `.env` si el usuario de dev no tiene permisos sobre `DV_PIPELINE_PROD` y prod usa su propio usuario de servicio con su par de claves. Verificarlo, y añadir la base efímera de CI.
 - [ ] **Objetos como código:** llenar `snowflake/` con scripts versionados (base de datos, esquemas, stage, roles, permisos) y quitar del cargador, del registro de trazabilidad y de dbt los `CREATE SCHEMA/STAGE/TABLE IF NOT EXISTS` en tiempo de ejecución, que hoy obligan a que el rol de ejecución tenga permisos de creación.
 - [ ] **Seguridad de acceso:** política de red para el acceso al servicio y gestión de secretos fuera de `.env`.
