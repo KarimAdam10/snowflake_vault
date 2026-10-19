@@ -19,9 +19,11 @@ models:
     raw_vault:
       +materialized: incremental
       +schema: raw_vault
+      +transient: false          # el histórico no se puede regenerar: permanente (dbt crea tablas transitorias por defecto)
     business_vault:
       +materialized: view
       +schema: business_vault
     mart:
       +materialized: table
       +schema: mart
+      +transient: true           # se recalcula completo desde el vault

@@ -23,7 +23,7 @@ Orquestado por Airflow · transformado por dbt (+ AutomateDV) · trazado en CONT
 | `STAGING` | 8 vistas (`stg_*`): calculan hash keys, hashdiff, `LOAD_DATETIME` y `RECORD_SOURCE` | dbt + `automate_dv.stage`, **generadas** desde `vault.yml` |
 | `RAW_VAULT` | 15 objetos: 4 hubs, 3 links, 6 satélites, 2 tablas de referencia. Aquí vive el **histórico** | dbt + AutomateDV, **generados** desde `vault.yml` |
 | `BUSINESS_VAULT` | 1 vista: `bsat_lineitem` (reglas de negocio de la línea de pedido) | modelo SQL escrito a mano |
-| `MART` | 7 tablas: `dim_customer`, `dim_supplier`, `dim_part`, `dim_order` (SCD2), `dim_date`, `fact_lineitem`, `fact_orders` | modelos SQL escritos a mano + macros |
+| `MART` | 6 tablas: `dim_customer`, `dim_supplier`, `dim_part`, `dim_order` (SCD2), `dim_date` y `fact_lineitem` | modelos SQL escritos a mano + macros |
 | `CONTROL` | `PIPELINE_LOG`: una fila por zip, entidad, modelo y test de cada ejecución | Airflow (`dv_lib/audit.py`) |
 
 ## Estructura del repositorio
@@ -45,8 +45,8 @@ dbt/
   scripts/generate_models.py Genera staging y Raw Vault desde metadata/
   tests/                     Tests singulares generados (ref_*_matches_staging)
 data/                  Un zip por lote: <periodo>_sample*.zip (202512 y 202601)
-.github/               Workflow de CI y rulesets de las ramas `dev` y `prod`
-snowflake/             Reservada para scripts SQL de objetos de Snowflake (vacía)
+.github/               Workflow de CI (se ejecuta en cada PR hacia `dev` o `prod`)
+snowflake/             Scripts SQL repetibles: roles, warehouses, base de datos, esquemas, permisos y usuarios de cada entorno
 keys/                  Clave privada de Snowflake (no se versiona)
 docs/                  La documentación (menos este README)
 Dockerfile · docker-compose.yml · requirements-*.txt    Entorno local (Airflow + dbt en un virtualenv aparte)
@@ -73,7 +73,7 @@ Dos lotes con las mismas 8 entidades, que simulan los mismos orígenes en dos mo
 | nation, region | 10→11, 4→4 | Catálogos casi estáticos: tablas de referencia |
 | orders, lineitem | 100→110, 500→550 | Solo filas nuevas |
 
-Resultado esperado tras cargar los dos lotes: hubs de customer, supplier, part y order con 22, 16, 43 y 210 filas; `lnk_lineitem` 1050; `sat_customer` 25, `sat_supplier` 18, `sat_part` 46; `ref_nation` 11 y `ref_region` 4. En el mart: `dim_customer` 25 filas (22 vigentes), `dim_supplier` 18 (16), `dim_part` 46 (43), `dim_order` 210, `fact_lineitem` 1050, `fact_orders` 210.
+Resultado esperado tras cargar los dos lotes: hubs de customer, supplier, part y order con 22, 16, 43 y 210 filas; `lnk_lineitem` 1050; `sat_customer` 25, `sat_supplier` 18, `sat_part` 46; `ref_nation` 11 y `ref_region` 4. En el mart: `dim_customer` 25 filas (22 vigentes), `dim_supplier` 18 (16), `dim_part` 46 (43), `dim_order` 210, `fact_lineitem` 1050.
 
 ## Puesta en marcha (PowerShell, en la raíz del repo)
 
@@ -83,7 +83,7 @@ Hay dos entornos, dev y prod: dos clones del repo, cada uno con su `.env` y su b
 
    | Variable | Para qué |
    |---|---|
-   | `SNOWFLAKE_ACCOUNT` (formato `ORG-CUENTA`), `SNOWFLAKE_USER`, `SNOWFLAKE_ROLE`, `SNOWFLAKE_WAREHOUSE`, `SNOWFLAKE_DATABASE` | Conexión; la base de datos y el warehouse deben existir y el rol tener permiso de crear esquemas. En dev, `DV_PIPELINE_DEV`; en prod, `DV_PIPELINE_PROD` |
+   | `SNOWFLAKE_ACCOUNT` (formato `ORG-CUENTA`), `SNOWFLAKE_USER`, `SNOWFLAKE_ROLE`, `SNOWFLAKE_WAREHOUSE`, `SNOWFLAKE_DATABASE` | Conexión. En dev: `SVC_DV_DEV`, `DV_ETL_DEV`, `WH_DV_DEV`, `DV_PIPELINE_DEV`; en prod, lo mismo con `PROD`. Se crean con `snowflake/` (ver [docs/snowflake.md](docs/snowflake.md)) |
    | `SNOWFLAKE_PASSWORD` **o** `SNOWFLAKE_PRIVATE_KEY_PATH` (+ `SNOWFLAKE_PRIVATE_KEY_PASSPHRASE` si la clave la tiene) | Autenticación. Con par de claves, la ruta es la del contenedor: `/opt/keys/rsa_key.p8` |
    | `SNOWFLAKE_SCHEMA` (opcional) | Esquema por defecto de la conexión (dbt usa `PUBLIC` si falta) |
    | `AIRFLOW_FERNET_KEY`, `AIRFLOW_JWT_SECRET` | Secretos locales de Airflow |
@@ -127,19 +127,20 @@ docker compose exec airflow-scheduler bash -c "cd /opt/dbt && /opt/dbt-venv/bin/
 
 ## Qué crea en Snowflake
 
-Todo lo crea el propio pipeline; la base de datos y el warehouse deben existir antes.
+La infraestructura (roles, usuarios, warehouses, base de datos y esquemas) la crean los scripts de `snowflake/`, una vez por entorno. El pipeline crea el resto:
 
 | Objeto | Quién lo crea |
 |---|---|
-| Esquema `LANDING`, stage `LANDING.STG_INGEST`, tablas `LND_*` | El cargador (`landing/loader.py`), si no existen |
-| Esquema `CONTROL` y tabla `PIPELINE_LOG` | El registro de trazabilidad (`dv_lib/audit.py`), si no existen |
-| Esquemas `STAGING`, `RAW_VAULT`, `BUSINESS_VAULT`, `MART` y sus objetos | dbt (la macro `generate_schema_name` usa el nombre del esquema tal cual, sin prefijo) |
+| Stage `LANDING.STG_INGEST` y tablas `LND_*` | El cargador (`landing/loader.py`), si no existen |
+| Tabla `CONTROL.PIPELINE_LOG` | El registro de trazabilidad (`dv_lib/audit.py`), si no existe |
+| Tablas y vistas de `STAGING`, `RAW_VAULT`, `BUSINESS_VAULT` y `MART` | dbt (la macro `generate_schema_name` usa el nombre del esquema tal cual, sin prefijo) |
+| Esquemas, roles, usuarios, warehouses | `snowflake/*.sql` |
 
 `dbt deps` (AutomateDV y `dbt_utils`) se ejecuta solo, dentro del DAG, si falta el paquete `automate_dv` en `dbt/dbt_packages`.
 
 ## Verificación realizada
 
-Se ejecutó el flujo real con los dos zips y se comprobó que **todo coincide con un cálculo independiente desde los CSV**: recuentos de los 15 objetos del Raw Vault, contenido de las tablas de referencia, versiones de las dimensiones, importes del hecho, días de tránsito y de retraso, y que las líneas del primer lote apuntan a la versión antigua de las dimensiones que cambiaron. `dbt` tiene **31 modelos y 100 tests**, y los dos lotes ejecutan las 15 tareas del DAG en verde. Ese cálculo independiente se hizo con scripts de la sesión de trabajo que **no están en el repositorio** (ver acciones pendientes).
+Se ejecutó el flujo real con los dos zips y se comprobó que **todo coincide con un cálculo independiente desde los CSV**: recuentos de los 15 objetos del Raw Vault, contenido de las tablas de referencia, versiones de las dimensiones, importes del hecho, días de tránsito y de retraso, y que las líneas del primer lote apuntan a la versión antigua de las dimensiones que cambiaron. `dbt` tiene **30 modelos y 90 tests**, y los dos lotes ejecutan las 15 tareas del DAG en verde. Ese cálculo independiente se hizo con scripts de la sesión de trabajo que **no están en el repositorio** (ver acciones pendientes).
 
 ## Documentación
 
@@ -150,6 +151,7 @@ Se ejecutó el flujo real con los dos zips y se comprobó que **todo coincide co
 | [business_vault_y_mart.md](docs/business_vault_y_mart.md) | Business Vault, estrella del mart, decisiones de modelado y verificación |
 | [decision_staging.md](docs/decision_staging.md) | Por qué existe la capa de staging y la alternativa sin ella |
 | [decision_reference_tables.md](docs/decision_reference_tables.md) | Por qué `nation` y `region` son tablas de referencia y no hubs |
+| [snowflake.md](docs/snowflake.md) | Diseño de Snowflake: objetos, roles y permisos, warehouses, justificación y cómo verificar el aislamiento |
 | [cicd.md](docs/cicd.md) | Flujo de trabajo dev → prod: ramas, pull requests, CI, configuración de GitHub y alta de los entornos |
 
 ## Límites conocidos
@@ -186,9 +188,9 @@ Lo que queda por hacer, y solo esto, para dejar el proyecto desplegable: el CI/C
 
 ### CI/CD
 
-Implementado el flujo de ramas con CI (ver [docs/cicd.md](docs/cicd.md)). Falta:
+Implementado: flujo de ramas `dev` → `prod` por pull request, CI sin Snowflake y dos entornos con su base de datos (ver [docs/cicd.md](docs/cicd.md)). Falta:
 
-- [ ] **Aplicar la configuración de GitHub** (renombrar `main` a `dev`, crear `prod`, importar los rulesets) y dar de alta el clon de prod: está descrito, pero son pasos manuales.
+- [ ] **Confirmar la primera carga en prod** con su usuario de servicio (ver Snowflake, más abajo y [docs/cicd.md](docs/cicd.md#estado)).
 - [ ] **Integración contra Snowflake**: base de datos efímera por ejecución, cargar los dos zips, `dbt build` y borrarla. Requiere un rol de CI acotado y secretos en GitHub.
 - [ ] **Convertir en tests automáticos la verificación independiente** contra los CSV (recuentos, importes, versiones SCD2). Hoy son scripts fuera del repositorio.
 - [ ] **Publicar la imagen** (p. ej. en GitHub Container Registry) en lugar de construirla en cada clon.
@@ -196,12 +198,10 @@ Implementado el flujo de ramas con CI (ver [docs/cicd.md](docs/cicd.md)). Falta:
 
 ### Permisos, roles y objetos de Snowflake
 
-Hoy todo se ejecuta con el rol y el warehouse del `.env` (en la cuenta de pruebas, `ACCOUNTADMIN` y `COMPUTE_WH`, y los objetos pertenecen a `ACCOUNTADMIN`).
+Implementado: roles por entorno, usuarios de servicio con clave, warehouses con tope de coste, base de datos y esquemas como código y Raw Vault permanente (ver [docs/snowflake.md](docs/snowflake.md)). Falta:
 
-- [ ] **Jerarquía de roles de mínimo privilegio** en lugar de `ACCOUNTADMIN`: un rol de ingesta (escribe en `LANDING` y `CONTROL`), uno de transformación para dbt (crea y modifica `STAGING`, `RAW_VAULT`, `BUSINESS_VAULT` y `MART`, y lee `LANDING`), uno de lectura analítica (solo `MART`) y uno administrador que los agrupe.
-- [ ] **Usuarios de servicio** para Airflow y para CI con autenticación por par de claves, sin contraseñas ni MFA interactivo, y rotación de claves.
-- [ ] **Permisos futuros** (`FUTURE TABLES/VIEWS IN SCHEMA`) para que los objetos nuevos que cree dbt hereden los permisos.
-- [ ] **Warehouses por carga de trabajo** (ingesta, transformación, consulta), de tamaño mínimo, con suspensión automática y un *resource monitor*.
-- [ ] **Separar los permisos de dev y prod.** `DV_PIPELINE_DEV` y `DV_PIPELINE_PROD` ya existen. Cada stack solo llega a la base de su `.env` si el usuario de dev no tiene permisos sobre `DV_PIPELINE_PROD` y prod usa su propio usuario de servicio con su par de claves. Verificarlo, y añadir la base efímera de CI.
-- [ ] **Objetos como código:** llenar `snowflake/` con scripts versionados (base de datos, esquemas, stage, roles, permisos) y quitar del cargador, del registro de trazabilidad y de dbt los `CREATE SCHEMA/STAGE/TABLE IF NOT EXISTS` en tiempo de ejecución, que hoy obligan a que el rol de ejecución tenga permisos de creación.
-- [ ] **Seguridad de acceso:** política de red para el acceso al servicio y gestión de secretos fuera de `.env`.
+- [ ] **Pasar prod al diseño nuevo:** `DV_PIPELINE_PROD` se cargó antes del rol `DV_ETL_PROD`; hay que cambiar su `.env` a `SVC_DV_PROD` y recargar con `full_refresh=true` para que sus tablas queden como las de dev (Raw Vault permanente, `LANDING` transitoria).
+- [ ] **Política de red** para el acceso al servicio y gestión de secretos y claves fuera de ficheros locales.
+- [ ] **Rol de CI** acotado y base de datos efímera para la integración continua.
+- [ ] **Separar cargador y transformador** (dos usuarios) si se quiere el mínimo privilegio estricto: hoy un solo rol por entorno hace la carga y dbt.
+- [ ] **Edición Enterprise** (si se quiere): Time Travel de varios días en el Raw Vault y warehouses multi-clúster.

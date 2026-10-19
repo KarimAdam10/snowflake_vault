@@ -34,7 +34,6 @@ def log_many(ctx, events):
     try:
         with get_connection() as conn:
             cur = conn.cursor()
-            cur.execute("CREATE SCHEMA IF NOT EXISTS CONTROL")
             cur.execute(DDL_TABLE)
             cur.executemany(INSERT, rows)
     except Exception as exc:  # noqa: BLE001 - la trazabilidad no debe romper la carga
