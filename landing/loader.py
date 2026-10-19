@@ -7,7 +7,7 @@ Flujo de un lote:
   1. extract_archive: descomprimir el zip del periodo en un directorio de trabajo
   2. check_contents: comprobar que está el fichero de cada contrato
   3. run (por entidad):
-       crear schema, stage y tabla de landing si no existen
+       crear stage y tabla de landing si no existen (el esquema LANDING lo crea snowflake/02_database.sql)
        vaciar la tabla (landing = último lote; relanzar no duplica)
        PUT del CSV al stage y COPY INTO la tabla, añadiendo columnas técnicas
 """
@@ -126,7 +126,6 @@ def run(conn, cur, entity, period, workdir):
     positional = ", ".join(f"${i}" for i in range(1, len(columns) + 1))
     delimiter = contract["source"].get("delimiter", ",")
 
-    cur.execute(f"CREATE SCHEMA IF NOT EXISTS {SCHEMA}")
     cur.execute(f"CREATE STAGE IF NOT EXISTS {STAGE}")
     cur.execute(f"""CREATE TABLE IF NOT EXISTS {table} (
         {column_ddl},

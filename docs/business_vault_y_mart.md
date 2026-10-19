@@ -6,7 +6,7 @@ El Business Vault (`dbt/models/business_vault/`) y el mart (`dbt/models/mart/`) 
 RAW_VAULT ──► BUSINESS_VAULT ──► MART
  (15 objetos)   bsat_lineitem      dim_customer · dim_supplier · dim_part   (macro scd2_dimension)
                 (vista)            dim_order                                 (macro scd2_dimension)
-                                   fact_lineitem · fact_orders               (SQL, macro join_scd2)
+                                   fact_lineitem                             (SQL, macro join_scd2)
                                    dim_date                                  (calendario)
 ```
 
@@ -33,9 +33,6 @@ erDiagram
     DIM_PART     ||--o{ FACT_LINEITEM : part_sk
     DIM_ORDER    ||--o{ FACT_LINEITEM : order_sk
     DIM_DATE     ||--o{ FACT_LINEITEM : "order / ship / commit / receipt"
-    DIM_ORDER    ||--|| FACT_ORDERS : order_sk
-    DIM_CUSTOMER ||--o{ FACT_ORDERS : customer_sk
-    DIM_DATE     ||--o{ FACT_ORDERS : order_date_key
 
     FACT_LINEITEM {
         number CUSTOMER_SK FK
@@ -55,13 +52,6 @@ erDiagram
         number CHARGE "medida (BV)"
         number DAYS_LATE "medida (BV)"
         boolean IS_LATE "medida (BV)"
-    }
-    FACT_ORDERS {
-        number ORDER_SK FK
-        number CUSTOMER_SK FK
-        number ORDER_DATE_KEY FK
-        number ORDER_KEY "degenerada"
-        number TOTAL_PRICE "medida"
     }
     DIM_ORDER {
         varchar ORDER_SK PK
@@ -110,7 +100,7 @@ erDiagram
 ```
 
 **Grano de `fact_lineitem`:** una fila por línea de pedido (1050 con los dos lotes).
-**Grano de `fact_orders`:** una fila por pedido (210). Aquí vive `TOTAL_PRICE`, el importe de la cabecera, que no puede ir en `fact_lineitem` porque se repetiría en cada línea y sumaría de más.
+**Sin hecho de pedidos.** No hay `fact_orders`: el importe total de un pedido (`O_TOTALPRICE`) no puede ir en `fact_lineitem` (se repetiría en cada línea y sumaría de más), pero tampoco hace falta exponerlo, porque es la suma del cargo (`CHARGE`) de sus líneas. Con los datos se comprobó que los 210 pedidos tienen líneas y que la diferencia máxima entre `O_TOTALPRICE` y la suma del cargo de sus líneas es de 0,005 por pedido (redondeo). El número de pedidos sale de `COUNT(DISTINCT ORDER_KEY)` y sus atributos, de `dim_order`. Si un origen futuro trajera pedidos sin líneas, o importes que no están en las líneas (envío, ajustes), habría que recuperar un hecho de pedido.
 
 ### Decisiones fijadas
 
@@ -121,7 +111,7 @@ erDiagram
 5. **Atributos degenerados en `fact_lineitem`:** número de pedido y de línea, modos de envío y banderas de devolución y de línea. Los atributos del pedido (estado, prioridad, empleado, prioridad de envío, comentario) están en `dim_order`. No se ha creado una dimensión de envío para `ship_mode`, `ship_instruct` y las banderas: son pocos atributos de baja cardinalidad y se dejan en el hecho.
 6. **`dim_date`:** calendario desde la fecha mínima a la máxima presente en el vault; el hecho lleva cuatro claves de fecha (pedido, envío, compromiso, recepción) contra la misma dimensión.
 7. **Medidas y reglas** de negocio: salen del Business Vault; el hecho no recalcula nada.
-8. **Fuera de alcance:** `fact_partsupp` (suministro por pieza y proveedor). `partsupp` sigue disponible en el Raw Vault; se reconsiderará si aporta lo suficiente.
+8. **Fuera de alcance:** `fact_partsupp` (suministro por pieza y proveedor). `partsupp` (`lnk_partsupp` y `sat_lnk_partsupp`) es lo único del Raw Vault que el mart no usa: pertenece a otro proceso de negocio (compras e inventario) que pediría un hecho de foto periódica con otro grano, y las ventas ya recogen la relación pieza-proveedor en cada línea. Sigue disponible en el vault y se añadiría sin tocarlo.
 
 ### Límite técnico conocido
 
@@ -129,11 +119,11 @@ erDiagram
 
 ## Tests y verificación
 
-El proyecto dbt tiene 31 modelos (8 de staging, 15 del Raw Vault, 1 del Business Vault y 7 del mart) y 100 tests; `dbt build` los ejecuta todos. Los del mart y del Business Vault:
+El proyecto dbt tiene 30 modelos (8 de staging, 15 del Raw Vault, 1 del Business Vault y 6 del mart) y 90 tests; `dbt build` los ejecuta todos. Los del mart y del Business Vault:
 
 - `unique` y `not_null` en cada clave subrogada y en cada hash key.
 - Sin solapes ni huecos entre versiones de una misma clave (`dbt_utils.mutually_exclusive_ranges`) y una sola versión vigente por clave.
-- Grano único (`LINEITEM_HK` en `fact_lineitem`, `ORDER_HK` en `fact_orders`) y mismo número de filas que su origen (`lnk_lineitem` y `hub_order`), para que no se pierda ningún registro al resolver dimensiones.
+- Grano único (`LINEITEM_HK` en `fact_lineitem`) y mismo número de filas que su origen (`lnk_lineitem`), para que no se pierda ningún registro al resolver dimensiones.
 - Todas las claves del hecho existen en su dimensión.
 - `bsat_lineitem` tiene el mismo número de filas que `sat_lnk_lineitem`.
 
@@ -148,8 +138,9 @@ Además se comprobó con un cálculo **independiente desde los CSV** (sin usar n
 | Líneas del lote 202512 que apuntan a una versión antigua | customer 75, supplier 60, part 32, igual al esperado desde los CSV |
 | Nación y región en dimensiones | correctas para todas las claves vigentes |
 | `dim_date` | exactamente el rango de fechas de los datos (80 días) |
-| `dim_order` / `fact_orders` | 210 pedidos (210 vigentes); atributos idénticos a los CSV |
-| `SUM(total_price)` de `fact_orders` | 7 358 018,31, igual a la suma de `o_totalprice` de los CSV |
+| `dim_order` | 210 pedidos (210 vigentes); atributos idénticos a los CSV |
+| Pedidos distintos en `fact_lineitem` | 210: todos los pedidos tienen líneas |
+| `SUM(charge)` frente a `SUM(o_totalprice)` de los CSV | 7 358 018,26 frente a 7 358 018,31: la diferencia es el redondeo por línea |
 
 ## Cómo ejecutarlo
 
