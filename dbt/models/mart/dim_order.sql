@@ -1,6 +1,6 @@
 {#
-  Dimensión SCD2 de pedido: atributos de la cabecera. O_TOTALPRICE (medida) y O_ORDERDATE (clave de
-  fecha) no van aquí, sino en fact_orders.
+  Dimensión SCD2 de pedido: atributos de la cabecera. O_ORDERDATE (clave de fecha) va en fact_lineitem;
+  O_TOTALPRICE no se expone: es la suma del cargo (CHARGE) de las líneas del pedido.
 #}
 {{ scd2_dimension(
     satellite='sat_order', hub='hub_order', hk='ORDER_HK', sk='ORDER_SK',
