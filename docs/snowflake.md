@@ -84,6 +84,16 @@ Cada uno tiene un **monitor de recursos** (10 créditos al mes: aviso al 75 % y 
 4. En el `.env` del entorno: `SNOWFLAKE_USER=SVC_DV_<ENV>`, `SNOWFLAKE_ROLE=DV_ETL_<ENV>`, `SNOWFLAKE_WAREHOUSE=WH_DV_<ENV>`, `SNOWFLAKE_DATABASE=DV_PIPELINE_<ENV>` y `SNOWFLAKE_PRIVATE_KEY_PATH=/opt/keys/svc_dv_<env>.p8`.
 5. Lanzar `dv_end_to_end` con `202512` y `full_refresh=true`, y después con `202601`.
 
+## Demostración de roles
+
+Dos scripts en [`snowflake/`](../snowflake) para enseñar el aislamiento sin escribir nada a mano:
+
+- **`demo_roles.py`: la identidad del pipeline.** Se ejecuta dentro del contenedor de cada entorno y prueba, con el usuario de servicio real, lo que puede y lo que no puede hacer (leer su base de datos, intentar leer la del otro entorno, crear esquemas, usuarios o warehouses...), mostrando el error de Snowflake en cada rechazo:
+  ```
+  docker compose exec airflow-scheduler python /opt/project/snowflake/demo_roles.py
+  ```
+- **`demo_roles.sql`: las personas.** Hoja para Snowsight con los roles `DV_DEVELOPER`, `DV_ETL_DEV` y `DV_READER_PROD`, cada sentencia con su resultado esperado, más los `SHOW GRANTS` que enseñan qué tiene concedido cada rol.
+
 ## Cómo comprobar el aislamiento
 
 Con `USE SECONDARY ROLES NONE` (si no, los roles secundarios de tu usuario, entre ellos `ACCOUNTADMIN`, falsean la prueba):
