@@ -1,5 +1,6 @@
 entity: region
 source:
+  name: local_csv
   file_pattern: "region.csv"
   format: csv
   delimiter: ","

@@ -1,5 +1,6 @@
 entity: lineitem
 source:
+  name: local_csv
   file_pattern: "lineitem.csv"
   format: csv
   delimiter: ","

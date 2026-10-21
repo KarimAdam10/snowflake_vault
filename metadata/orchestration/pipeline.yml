@@ -4,7 +4,7 @@
 #
 # El flujo y sus dependencias se declaran aquí; las tareas de carga a LANDING se generan una por
 # contrato (metadata/ingestion/contracts/<entidad>.yml); sus reintentos y timeout se declaran aquí, en
-# `entities`. De dónde sale cada lote se define en metadata/ingestion/source.yml.
+# `entities`. De dónde sale cada dato lo define el origen de cada contrato (metadata/ingestion/source.yml).
 
 # Valores por defecto de las tareas; `entities` los sobrescribe para la carga de cada entidad.
 defaults:
@@ -20,11 +20,8 @@ entities:
 # Etapas disponibles. `type` decide qué hace; `depends_on` son sus dependencias (solo se respetan
 # las que pertenezcan al pipeline que las usa).
 stages:
-  extract:
-    type: extract_archive            # descomprime el zip del periodo y comprueba que están todos los ficheros
   landing:
-    type: load_landing               # una tarea por contrato: CSV -> LANDING (según load.type)
-    depends_on: [extract]
+    type: load_landing               # una tarea por contrato: extrae del origen del contrato y carga a LANDING (según load.type)
   generate_models:
     type: generate_models            # regenera los modelos dbt desde metadata/ (transformación dirigida por metadatos)
   # Cada etapa dbt ejecuta `dbt build` de su capa (modelos + tests). Los tests que dependen de capas
@@ -45,15 +42,11 @@ stages:
     type: dbt
     select: mart
     depends_on: [dbt_business_vault]
-  cleanup:
-    type: cleanup                    # borra los ficheros temporales aunque alguna etapa haya fallado
-    teardown_for: extract            # teardown de Airflow: se ejecuta siempre, pero no oculta un fallo anterior
-    depends_on: [landing, dbt_mart]
 
 # Pipelines = DAGs de Airflow. Cada uno es una selección de etapas.
 pipelines:
   dv_end_to_end:
-    description: "Lote completo: zip -> LANDING -> STAGING -> RAW_VAULT -> BUSINESS_VAULT -> MART"
+    description: "Lote completo: CSV -> LANDING -> STAGING -> RAW_VAULT -> BUSINESS_VAULT -> MART"
     schedule: null
     tags: [end-to-end]
-    stages: [extract, landing, generate_models, dbt_staging, dbt_raw_vault, dbt_business_vault, dbt_mart, cleanup]
+    stages: [landing, generate_models, dbt_staging, dbt_raw_vault, dbt_business_vault, dbt_mart]

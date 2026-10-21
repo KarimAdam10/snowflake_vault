@@ -1,5 +1,6 @@
 entity: customer
 source:
+  name: local_csv
   file_pattern: "customer.csv"
   format: csv
   delimiter: ","
