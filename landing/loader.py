@@ -1,27 +1,21 @@
-"""Carga los CSV de un lote (un zip por periodo) a sus tablas de landing en Snowflake.
+"""Extrae y carga a LANDING (Snowflake) los datos de cada entidad.
 
-El zip se localiza con metadata/ingestion/source.yml; cada CSV, con su contrato
-(metadata/ingestion/contracts/<entidad>.yml).
+El contrato de cada entidad (metadata/ingestion/contracts/<entidad>.yml) dice qué dato interesa y de qué origen sale
+(`source.name`); metadata/ingestion/source.yml define esos orígenes (su `type` elige el extractor).
 
-Flujo de un lote:
-  1. extract_archive: descomprimir el zip del periodo en un directorio de trabajo
-  2. check_contents: comprobar que está el fichero de cada contrato
-  3. run (por entidad):
-       crear stage y tabla de landing si no existen (el esquema LANDING lo crea snowflake/02_database.sql)
-       borrar lo que corresponda según load.type (snapshot: todo; incremental: solo el periodo; relanzar no duplica)
-       PUT del CSV al stage y COPY INTO la tabla, añadiendo columnas técnicas
+Carga de una entidad (`load`):
+  1. extract: el extractor del origen deja disponible el fichero de la entidad para el periodo
+  2. crear stage y tabla de landing si no existen (el esquema LANDING lo crea snowflake/02_database.sql)
+  3. borrar lo que corresponda según load.type (snapshot: todo; incremental: solo el periodo; relanzar no duplica)
+  4. PUT del CSV al stage y COPY INTO la tabla, añadiendo columnas técnicas
 """
-import os
-import re
-import zipfile
-from pathlib import Path
 
 import yaml
 
-ROOT = Path(os.environ.get("PROJECT_ROOT") or Path(__file__).resolve().parents[1])
+from landing.extract import ROOT, get_extractor
+
 METADATA_DIR = ROOT / "metadata"
 CONTRACTS_DIR = METADATA_DIR / "ingestion" / "contracts"
-SOURCE_FILE = METADATA_DIR / "ingestion" / "source.yml"
 PIPELINE_FILE = METADATA_DIR / "orchestration" / "pipeline.yml"
 
 SCHEMA = "LANDING"
@@ -44,68 +38,17 @@ def load_pipeline_config():
     return yaml.safe_load(PIPELINE_FILE.read_text(encoding="utf-8"))
 
 
-# ---- el zip de cada lote ----
-def _source():
-    src = yaml.safe_load(SOURCE_FILE.read_text(encoding="utf-8"))
-    return ROOT / src["directory"], src["pattern"]
-
-
-def list_periods():
-    """Periodos (YYYYMM) para los que hay un zip, según el patrón de metadata/ingestion/source.yml."""
-    directory, pattern = _source()
-    any_period = pattern.format(period="[0-9]" * 6)
-    return sorted({re.search(r"\d{6}", p.name).group() for p in directory.glob(any_period)})
-
-
-def find_archive(period):
-    directory, pattern = _source()
-    matches = sorted(directory.glob(pattern.format(period=period)))
-    if len(matches) != 1:
-        raise FileNotFoundError(
-            f"Se esperaba un zip para el periodo {period} ({pattern.format(period=period)}) en {directory}; "
-            f"encontrados: {[m.name for m in matches]}")
-    return matches[0]
-
-
-def extract_archive(period, dest):
-    """Extrae el zip del periodo en `dest` (solo el nombre de cada fichero: evita zip-slip)."""
-    archive = find_archive(period)
-    dest = Path(dest)
-    dest.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(archive) as zf:
-        for info in zf.infolist():
-            if not info.is_dir():
-                (dest / Path(info.filename).name).write_bytes(zf.read(info))
-    return archive
-
-
-def find_source_file(contract, workdir):
-    pattern = contract["source"]["file_pattern"]
-    matches = sorted(Path(workdir).glob(pattern))
-    if len(matches) != 1:
-        raise FileNotFoundError(f"{contract['entity']}: se esperaba un fichero '{pattern}' en el lote; encontrados {len(matches)}")
-    return matches[0]
-
-
-def check_contents(workdir):
-    """Comprueba que el lote trae el fichero de todos los contratos. Devuelve {entidad: ruta}."""
-    found, missing = {}, []
-    for entity in list_entities():
-        try:
-            found[entity] = find_source_file(load_contract(entity), workdir)
-        except FileNotFoundError as exc:
-            missing.append(str(exc))
-    if missing:
-        raise FileNotFoundError("El lote no está completo: " + "; ".join(missing))
-    return found
-
-
 # ---- carga a Snowflake ----
-def run(conn, cur, entity, period, workdir, full_refresh=False):
-    """Ejecuta la carga y devuelve el nº de filas cargadas. `cur` es un cursor de Snowflake."""
+def load(conn, cur, entity, period, full_refresh=False):
+    """Extrae la entidad de su origen y la carga a LANDING; devuelve el nº de filas cargadas. `cur` es un cursor de Snowflake."""
     contract = load_contract(entity)
-    path = find_source_file(contract, workdir)
+    src, ext = get_extractor(contract["source"]["name"])
+    with ext["extract"](src, contract["source"], period) as path:
+        return _load_file(conn, cur, contract, path, period, full_refresh)
 
+
+def _load_file(conn, cur, contract, path, period, full_refresh):
+    entity = contract["entity"]
     table = f"{SCHEMA}.{contract['target']['landing_table']}"
     stage_path = f"@{STAGE}/{period}/{entity}/"
     columns = contract["columns"]

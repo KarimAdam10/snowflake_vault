@@ -2,7 +2,6 @@
 las entidades salen de los contratos y las capas de dbt, de los metadatos."""
 import json
 import os
-import shutil
 import subprocess
 import sys
 import time
@@ -15,7 +14,6 @@ from dv_lib import audit
 from landing import loader
 from landing.snowflake_conn import get_connection
 
-WORK_ROOT = Path(os.environ.get("DV_WORK_DIR", "/tmp/dv_pipeline"))
 DBT_DIR = Path(os.environ.get("DBT_PROJECT_DIR", "/opt/dbt"))
 DBT_BIN = os.environ.get("DBT_VENV", "/opt/dbt-venv") + "/bin/dbt"
 
@@ -26,28 +24,12 @@ def _ctx():
             "full_refresh": bool(c["params"].get("full_refresh"))}
 
 
-def _workdir(period):
-    return WORK_ROOT / period
-
-
-def extract_archive():
-    ctx = _ctx()
-    workdir = _workdir(ctx["period"])
-    shutil.rmtree(workdir, ignore_errors=True)
-    with audit.tracked(ctx, "extract", f"zip {ctx['period']}") as ev:
-        archive = loader.extract_archive(ctx["period"], workdir)
-        files = loader.check_contents(workdir)
-        ev["rows"] = len(files)
-        ev["message"] = archive.name
-        print(f"{archive.name}: {len(files)} ficheros -> {workdir}")
-
-
 def load_landing(entity):
     ctx = _ctx()
     contract = loader.load_contract(entity)
     with audit.tracked(ctx, "landing", entity) as ev:
         with get_connection() as conn, conn.cursor(DictCursor) as cur:
-            rows = loader.run(conn, cur, entity, ctx["period"], _workdir(ctx["period"]), ctx["full_refresh"])
+            rows = loader.load(conn, cur, entity, ctx["period"], ctx["full_refresh"])
         ev["rows"] = rows
         print(f"{entity} {ctx['period']}: {rows} filas cargadas")
         if contract["load"]["type"] == "snapshot" and rows == 0:
@@ -96,7 +78,3 @@ def run_dbt(stage, select, exclude=""):
     audit.log_many(ctx, events)
     if p.returncode:
         raise RuntimeError(f"dbt build --select {select} terminó con errores (ver el log de la tarea)")
-
-
-def cleanup():
-    shutil.rmtree(_workdir(_ctx()["period"]), ignore_errors=True)
