@@ -30,4 +30,14 @@ AutomateDV no trae un satélite de estado para hubs. Su `eff_sat` está pensado 
 
 ---
 
+## 2. Nuevos tipos de origen y de formato
+
+**Situación actual.** El origen de los lotes se declara en `metadata/ingestion/source.yml` con un `type` (hoy solo `local_folder`: una carpeta `data/<periodo>/` con un CSV por entidad). El cargador elige el extractor en el registro `EXTRACTORS` de `landing/loader.py`. Un extractor son tres funciones (`periods`, `location` y `fetch`) y su único contrato es dejar los CSV del periodo en un directorio; contratos, carga y dbt no saben de dónde vienen. El extractor local no copia ni descomprime nada.
+
+**Qué falta para otros orígenes.** Cada tipo nuevo (S3, SharePoint) es un extractor escrito una vez, no una pieza por tabla; uno remoto descargaría el fichero a un directorio temporal que borra al terminar la propia tarea. Cuando el fichero no es CSV (por ejemplo un xlsx) hace falta además un conversor a CSV antes de la carga, con decisiones sobre hoja, cabeceras y tipos que el contrato tendría que declarar. El cargador hoy rechaza cualquier formato que no sea CSV.
+
+**Siguiente paso.** Añadir el extractor que se necesite y poner su `type` en `source.yml`. Si hubiera varios orígenes a la vez, `source.yml` pasaría a ser una lista de orígenes.
+
+---
+
 <!-- Siguiente punto: copiar la plantilla de arriba -->

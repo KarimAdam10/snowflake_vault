@@ -71,6 +71,6 @@ La rama por defecto es `dev`: los PR nuevos apuntan a ella, y llevar algo a `pro
 ## Límites y pendientes
 
 - **Prod protegido en GitHub, no en tu disco.** Nada puede entrar en la rama `prod` sin PR, pero el clon de prod es una carpeta en tu máquina y se puede editar. Si solo haces `git pull` en ella, es exactamente la rama `prod`; `git status` debe salir limpio.
-- **Sin pruebas contra Snowflake en el CI.** Pendiente: una base efímera que cargue los dos zips y compruebe los recuentos (necesita un rol de CI acotado).
+- **Sin pruebas contra Snowflake en el CI.** Pendiente: una base efímera que cargue los dos lotes y compruebe los recuentos (necesita un rol de CI acotado).
 - **Despliegue manual:** `git pull` y, si cambian `Dockerfile` o `requirements-*.txt`, `up -d --build`.
-- **Datos en el repo:** los zips de `data/` se versionan solo porque es una demo con datos de ejemplo y el repo es público. En un entorno real los datos nunca irían al repositorio (bucket o stage de Snowflake con permisos).
+- **Datos en el repo:** `data/` está en `.gitignore`: los datos de entrada nunca van al repositorio y se colocan a mano en cada entorno (en la nube, un bucket o un stage de Snowflake con permisos).

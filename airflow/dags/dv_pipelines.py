@@ -4,7 +4,7 @@ No hay código por tabla ni por pipeline:
   - cada pipeline de `pipelines:` es un DAG, con las etapas que liste;
   - las dependencias salen de `depends_on` de cada etapa;
   - las tareas de carga a LANDING son una por contrato, con sus reintentos y timeout;
-  - el periodo (un zip por lote) y `full_refresh` son parámetros de cada ejecución.
+  - el periodo (un lote de CSV) y `full_refresh` son parámetros de cada ejecución.
 
 Cambiar metadata/orchestration/pipeline.yml o los contratos cambia los DAGs en el siguiente refresco del dag-processor.
 """
@@ -18,7 +18,7 @@ from landing import loader
 
 CFG = loader.load_pipeline_config()
 DEFAULTS = CFG.get("defaults", {})
-PERIODS = loader.list_periods()          # un periodo por cada zip disponible
+PERIODS = loader.list_periods()          # un periodo por cada lote disponible
 
 
 def _retry_args(source):
@@ -51,8 +51,6 @@ def _downstream_dbt_selects(name):
 
 def _build_stage(name, cfg):
     kind = cfg["type"]
-    if kind == "extract_archive":
-        return _task(name, tasks.extract_archive, cfg, **_retry_args(cfg))
     if kind == "load_landing":
         with TaskGroup(group_id=name) as group:
             for entity in loader.list_entities():
@@ -65,13 +63,11 @@ def _build_stage(name, cfg):
         exclude = cfg.get("exclude") or " ".join(_downstream_dbt_selects(name))
         return _task(name, tasks.run_dbt, cfg, {"stage": name, "select": cfg["select"], "exclude": exclude},
                      **_retry_args(cfg))
-    if kind == "cleanup":
-        return _task(name, tasks.cleanup, cfg, **_retry_args(cfg))
     raise ValueError(f"Etapa '{name}': tipo desconocido '{kind}'")
 
 
 def _params():
-    period = (Param(PERIODS[0], type="string", enum=PERIODS, description="Periodo (YYYYMM) = zip del lote")
+    period = (Param(PERIODS[0], type="string", enum=PERIODS, description="Periodo (YYYYMM) del lote")
               if PERIODS else Param("", type="string", pattern=r"^\d{6}$", description="Periodo (YYYYMM)"))
     return {
         "period": period,
@@ -101,9 +97,6 @@ def _build_dag(dag_id, spec):
             for dep in CFG["stages"][n].get("depends_on", []):
                 if dep in nodes:
                     nodes[dep] >> nodes[n]
-            setup = CFG["stages"][n].get("teardown_for")
-            if setup in nodes:
-                nodes[n].as_teardown(setups=nodes[setup])
     return dag
 
 

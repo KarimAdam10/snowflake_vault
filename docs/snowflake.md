@@ -24,9 +24,9 @@ Un entorno es un conjunto cerrado: **su usuario de servicio solo conoce su rol, 
 
 | Esquema | Contenido | Tipo | Por qué |
 |---|---|---|---|
-| `LANDING` | Último lote tal cual llega del zip | transitorio | Se regenera desde el zip; no necesita Fail-safe (ahorra almacenamiento) |
+| `LANDING` | Último lote tal cual llega de los CSV | transitorio | Se regenera desde los CSV de origen; no necesita Fail-safe (ahorra almacenamiento) |
 | `STAGING` | Vistas con hash keys y hashdiff | (vistas) | No almacenan datos |
-| `RAW_VAULT` | Histórico del Data Vault | **permanente** | Es la única copia del histórico: no se puede regenerar del zip una vez sustituido el lote |
+| `RAW_VAULT` | Histórico del Data Vault | **permanente** | Es la única copia del histórico: no se puede regenerar de los CSV una vez sustituido el lote |
 | `BUSINESS_VAULT` | Reglas de negocio calculadas | (vistas) | No almacenan datos |
 | `MART` | Modelo dimensional | transitorio | Se recalcula completo desde el vault |
 | `CONTROL` | `PIPELINE_LOG`, trazabilidad | permanente | Es auditoría |

@@ -1,5 +1,6 @@
 entity: partsupp
 source:
+  name: local_csv
   file_pattern: "partsupp.csv"
   format: csv
   delimiter: ","

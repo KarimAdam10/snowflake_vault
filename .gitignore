@@ -24,6 +24,5 @@ dbt/target/
 dbt/dbt_packages/
 dbt/logs/
 
-# Datos de entrada extraídos (los zips de data/ se versionan solo en esta demo; ver docs/cicd.md)
-data/landing/*
-!data/landing/.gitkeep
+# Datos de entrada: no se versionan (los lotes de CSV de data/ se colocan a mano en cada entorno)
+data/

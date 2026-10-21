@@ -1,14 +1,14 @@
 # DV Pipeline · Snowflake + dbt + Airflow
 
-Pipeline de datos end-to-end sobre **Snowflake** con arquitectura **Data Vault 2.0**: carga un lote de ficheros (un zip por periodo), lo transforma por capas con **dbt** y deja un **modelo dimensional** listo para analítica, todo orquestado con **Airflow**. El comportamiento del pipeline (ingesta, vault, orquestación) se gobierna con ficheros de metadatos, no con código por tabla.
+Pipeline de datos end-to-end sobre **Snowflake** con arquitectura **Data Vault 2.0**: carga un lote de ficheros (una carpeta de CSV por periodo), lo transforma por capas con **dbt** y deja un **modelo dimensional** listo para analítica, todo orquestado con **Airflow**. El comportamiento del pipeline (ingesta, vault, orquestación) se gobierna con ficheros de metadatos, no con código por tabla.
 
 El proyecto corre en local con Docker (Airflow, dbt y el código de ingesta); Snowflake es la base de datos en la nube donde viven todos los datos y se ejecuta todo el SQL.
 
 ## Resumen
 
 ```
-zip del periodo
-   │  extract + landing (Python, una tarea por entidad)
+CSV del periodo
+   │  extracción + landing (Python, una tarea por entidad)
    ▼
 LANDING ──► STAGING ──► RAW_VAULT ──► BUSINESS_VAULT ──► MART
  último       vistas      histórico       reglas de          dimensiones
@@ -24,7 +24,7 @@ Orquestado por Airflow · transformado por dbt (+ AutomateDV) · trazado en CONT
 | `RAW_VAULT` | 15 objetos: 4 hubs, 3 links, 6 satélites, 2 tablas de referencia. Aquí vive el **histórico** | dbt + AutomateDV, **generados** desde `vault.yml` |
 | `BUSINESS_VAULT` | 1 vista: `bsat_lineitem` (reglas de negocio de la línea de pedido) | modelo SQL escrito a mano |
 | `MART` | 6 tablas: `dim_customer`, `dim_supplier`, `dim_part`, `dim_order` (SCD2), `dim_date` y `fact_lineitem` | modelos SQL escritos a mano + macros |
-| `CONTROL` | `PIPELINE_LOG`: una fila por zip, entidad, modelo y test de cada ejecución | Airflow (`dv_lib/audit.py`) |
+| `CONTROL` | `PIPELINE_LOG`: una fila por periodo, entidad, modelo y test de cada ejecución | Airflow (`dv_lib/audit.py`) |
 
 ## Estructura del repositorio
 
@@ -32,9 +32,9 @@ Orquestado por Airflow · transformado por dbt (+ AutomateDV) · trazado en CONT
 airflow/dags/
   dv_pipelines.py      Factoría: genera los DAGs de Airflow desde metadata/orchestration/pipeline.yml
   dv_lib/              Qué ejecuta cada etapa (tasks.py) y cómo se registra en CONTROL (audit.py)
-landing/               Ingesta genérica zip -> LANDING (loader.py, snowflake_conn.py)
+landing/               Ingesta genérica CSV -> LANDING (loader.py, snowflake_conn.py)
 metadata/              Todos los metadatos, una carpeta por tema
-  ingestion/             contracts/<entidad>.yml (fichero, columnas, tipos, tipo de carga) y source.yml (dónde está el zip)
+  ingestion/             contracts/<entidad>.yml (fichero, columnas, tipos, tipo de carga) y source.yml (los orígenes: el `type` de cada uno elige el extractor)
   vault/                 vault.yml (hubs, links, satélites y tablas de referencia del Raw Vault)
   orchestration/         pipeline.yml (etapas, dependencias, DAGs, reintentos y timeout por entidad)
 dbt/
@@ -44,7 +44,7 @@ dbt/
   macros/                    scd2_dimension, join_scd2, generate_schema_name
   scripts/generate_models.py Genera staging y Raw Vault desde metadata/
   tests/                     Tests singulares generados (ref_*_matches_staging)
-data/                  Un zip por lote: <periodo>_sample*.zip (202512 y 202601)
+data/                  Una carpeta por lote con un CSV por entidad: 202512/ y 202601/ (no se versiona)
 .github/               Workflow de CI (se ejecuta en cada PR hacia `dev` o `prod`)
 snowflake/             Scripts SQL repetibles: roles, warehouses, base de datos, esquemas, permisos y usuarios de cada entorno
 keys/                  Clave privada de Snowflake (no se versiona)
@@ -57,7 +57,7 @@ Dockerfile · docker-compose.yml · requirements-*.txt    Entorno local (Airflow
 | Tema | Fichero | Qué cambia sin tocar código |
 |---|---|---|
 | Entidades de ingesta | `metadata/ingestion/contracts/*.yml` | Añadir o cambiar una entidad: fichero, columnas, tipos. Aparece sola una tarea de carga |
-| Origen de los lotes | `metadata/ingestion/source.yml` | Dónde está el zip y cómo se llama; los periodos disponibles son los zips que haya |
+| Orígenes de los datos | `metadata/ingestion/source.yml` y `source.name` de cada contrato | Cada contrato nombra su origen; el `type` del origen elige el extractor (hoy `local_folder`: `data/<periodo>/`) |
 | Raw Vault | `metadata/vault/vault.yml` | Hubs, links, satélites, tablas de referencia; de aquí salen staging y Raw Vault |
 | Orquestación | `metadata/orchestration/pipeline.yml` | Etapas, dependencias, qué DAGs existen, reintentos y timeout por entidad |
 
@@ -111,7 +111,7 @@ Hay dos entornos, dev y prod: dos clones del repo, cada uno con su `.env` y su b
 
 ## Ejecutar el pipeline
 
-Los DAGs nacen pausados. Deja los zips en `data/` y, en la UI de Airflow, activa `dv_end_to_end` y lánzalo:
+Los DAGs nacen pausados. Deja las carpetas de cada periodo (`data/202512/`, `data/202601/`) con sus CSV y, en la UI de Airflow, activa `dv_end_to_end` y lánzalo:
 
 1. `period = 202512` y `full_refresh = true` (reconstruye el vault desde cero).
 2. Cuando termine, `period = 202601` y `full_refresh = false`.
@@ -140,7 +140,7 @@ La infraestructura (roles, usuarios, warehouses, base de datos y esquemas) la cr
 
 ## Verificación realizada
 
-Se ejecutó el flujo real con los dos zips y se comprobó que **todo coincide con un cálculo independiente desde los CSV**: recuentos de los 15 objetos del Raw Vault, contenido de las tablas de referencia, versiones de las dimensiones, importes del hecho, días de tránsito y de retraso, y que las líneas del primer lote apuntan a la versión antigua de las dimensiones que cambiaron. `dbt` tiene **30 modelos y 90 tests**, y los dos lotes ejecutan las 15 tareas del DAG en verde. Ese cálculo independiente se hizo con scripts de la sesión de trabajo que **no están en el repositorio** (ver acciones pendientes).
+Se ejecutó el flujo real con los dos lotes y se comprobó que **todo coincide con un cálculo independiente desde los CSV**: recuentos de los 15 objetos del Raw Vault, contenido de las tablas de referencia, versiones de las dimensiones, importes del hecho, días de tránsito y de retraso, y que las líneas del primer lote apuntan a la versión antigua de las dimensiones que cambiaron. `dbt` tiene **30 modelos y 90 tests**, y los dos lotes ejecutan las 13 tareas del DAG en verde. Ese cálculo independiente se hizo con scripts de la sesión de trabajo que **no están en el repositorio** (ver acciones pendientes).
 
 ## Documentación
 
@@ -166,9 +166,8 @@ Se ejecutó el flujo real con los dos zips y se comprobó que **todo coincide co
 - **Cada hub se carga desde una sola entidad.** Con estos datos no hay claves huérfanas (se comprobó); con otros, habría que cargar el hub desde todas las fuentes que traen la clave.
 - **Las claves de negocio de las dimensiones** están escritas en su SQL y también en `vault.yml`: si cambia una, hay que cambiar las dos.
 - **`dim_date`** genera hasta 3660 días desde la fecha mínima; los tests del hecho avisarían si los datos abarcaran más.
-- **Ficheros temporales** (`/tmp/dv_pipeline`) en el disco del contenedor: vale con un único ejecutor local.
 - **Entorno:** el DAG antiguo `01_load_landing` sigue registrado en la base de datos de Airflow aunque su fichero ya no existe. Se puede retirar con `airflow dags delete 01_load_landing`.
-- **Datos en git:** los zips de `data/` se versionan solo porque es una demo con datos de ejemplo y repo público; en un entorno real los datos nunca irían al repositorio.
+- **Datos en git:** `data/` está en `.gitignore`: los datos de entrada nunca van al repositorio y se colocan a mano en cada entorno (en la nube, un bucket).
 
 ## Problemas frecuentes
 
@@ -195,7 +194,7 @@ Lo que queda por hacer, y solo esto, para dejar el proyecto desplegable: el CI/C
 Implementado: flujo de ramas `dev` → `prod` por pull request, CI sin Snowflake y dos entornos con su base de datos (ver [docs/cicd.md](docs/cicd.md)). Falta:
 
 - [ ] **Confirmar la primera carga en prod** con su usuario de servicio (ver Snowflake, más abajo y [docs/cicd.md](docs/cicd.md#estado)).
-- [ ] **Integración contra Snowflake**: base de datos efímera por ejecución, cargar los dos zips, `dbt build` y borrarla. Requiere un rol de CI acotado y secretos en GitHub.
+- [ ] **Integración contra Snowflake**: base de datos efímera por ejecución, cargar los dos lotes, `dbt build` y borrarla. Requiere un rol de CI acotado y secretos en GitHub.
 - [ ] **Convertir en tests automáticos la verificación independiente** contra los CSV (recuentos, importes, versiones SCD2). Hoy son scripts fuera del repositorio.
 - [ ] **Publicar la imagen** (p. ej. en GitHub Container Registry) en lugar de construirla en cada clon.
 - [ ] **Datos fuera del repo** en un entorno real (ver límites conocidos).

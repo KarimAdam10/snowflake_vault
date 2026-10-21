@@ -1,5 +1,10 @@
-# De dónde sale cada lote de entrada (un zip por periodo). {period} = YYYYMM.
-# El patrón admite comodines (p. ej. "202512_sample (1).zip"). Los periodos disponibles son los de
-# los zips encontrados en `directory` (relativo a la raíz del proyecto).
-directory: data
-pattern: "{period}_sample*.zip"
+# Orígenes de los datos. Cada contrato nombra el suyo en `source.name`; `type` elige el extractor (registro
+# EXTRACTORS de landing/loader.py) y el resto de claves son los parámetros de ese extractor. Cambiar de origen
+# (S3, SharePoint, una API...) es añadir un extractor y declarar aquí un origen con su type: contratos, carga y
+# dbt no cambian.
+sources:
+  local_csv:
+    type: local_folder
+    # Una carpeta por periodo (YYYYMM) con un fichero por entidad. `{period}` marca la parte de la ruta que es el
+    # periodo: los periodos disponibles son las carpetas que ocupen ese lugar. Solo aplica a este type.
+    directory: "data/{period}"

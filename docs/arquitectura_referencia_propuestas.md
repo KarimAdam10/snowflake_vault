@@ -32,7 +32,7 @@ La cloud solo cambia **dónde se ejecuta y se guarda** cada cosa. Estas piezas s
 
 | Capa | Dónde vive | Quién la construye |
 |---|---|---|
-| Zips de entrada (`raw`) | Almacenamiento de objetos: inmutables, es lo único que no se puede regenerar de otro sitio | Quien entrega los datos |
+| Ficheros de entrada (`raw`) | Almacenamiento de objetos: inmutables, es lo único que no se puede regenerar de otro sitio | Quien entrega los datos |
 | `LANDING` | Snowflake, tablas transitorias: último lote (`snapshot`) o lotes acumulados (`incremental`) de cada entidad | Tareas de carga de Airflow (`COPY INTO`) |
 | `STAGING` | Snowflake, vistas: hash keys y hashdiff | dbt (generado desde `vault.yml`) |
 | `RAW_VAULT` | Snowflake, tablas permanentes: histórico completo | dbt con AutomateDV |
@@ -56,7 +56,7 @@ Lo que cambia entre alternativas es **qué servicio ejecuta cada paso**, no el f
 
 ### Dos adaptaciones que valen para las tres
 
-1. **Los zips en un bucket y carga desde un *stage externo*.** En la demo, el cargador extrae el zip a `/tmp`, hace `PUT` de cada CSV a un stage interno de Snowflake y ejecuta `COPY INTO`. En la nube no hay disco local: la tarea extrae el zip a otro prefijo del bucket (`landing/<periodo>/`) y Snowflake lee directamente de ahí con un **stage externo**; `COPY INTO` se queda igual y desaparece el `PUT`. Snowflake accede al bucket mediante una ***storage integration***: un rol de la cloud que Snowflake asume, con permiso de solo lectura sobre ese prefijo, de modo que no se guardan claves.
+1. **Los CSV en un bucket y carga desde un *stage externo*.** En la demo, el cargador toma los CSV de la carpeta del periodo, hace `PUT` de cada uno a un stage interno de Snowflake y ejecuta `COPY INTO`. En la nube no hay disco local: los CSV están en un prefijo del bucket (`raw/<periodo>/`) y Snowflake lee directamente de ahí con un **stage externo**; `COPY INTO` se queda igual y desaparece el `PUT`. Snowflake accede al bucket mediante una ***storage integration***: un rol de la cloud que Snowflake asume, con permiso de solo lectura sobre ese prefijo, de modo que no se guardan claves.
 2. **Los modelos de dbt se generan dentro de la tarea.** Staging y Raw Vault no están en git: los genera `generate_models.py` desde los metadatos. En un contenedor efímero, la tarea de dbt debe ejecutar los dos pasos juntos (`generate_models.py` y después `dbt build --select <capa>`). Los resultados de dbt (`run_results.json`) se dejan en el bucket y una tarea ligera de Airflow los lee para escribir en `CONTROL.PIPELINE_LOG`, que es lo que hoy hace `run_dbt`.
 
 ---
@@ -80,8 +80,7 @@ La cuenta de Snowflake de este proyecto está en AWS (región `AWS_EU_WEST_3`, P
 
 | En la demo | En AWS | Qué cambia |
 |---|---|---|
-| Carpeta `data/` con los zips | Bucket de S3, prefijo `raw/` | Mismos ficheros; el periodo sigue saliendo del nombre del zip (`source.yml` apunta al prefijo) |
-| `/tmp/dv_pipeline` (CSV extraídos) | Prefijo `landing/<periodo>/` del bucket | Sin disco local |
+| Carpeta `data/<periodo>/` | Bucket de S3, prefijo `raw/<periodo>/` | Mismos CSV; un extractor `s3` (`type` en `source.yml`) sustituye a `local_folder` |
 | `PUT` + `COPY INTO` desde stage interno | Stage externo sobre S3 + `COPY INTO` | Una *storage integration* con un rol de IAM de solo lectura |
 | Contenedores `scheduler`, `dag-processor`, `apiserver`, `postgres` | **Entorno de MWAA** | Se crea el entorno y se sube el código; se pierde el control del sistema operativo |
 | DAGs y `metadata/` montados por volumen | Carpeta `dags/` del bucket de MWAA (DAGs, factoría y metadatos juntos) | El despliegue es sincronizar esa carpeta |
@@ -93,19 +92,17 @@ La cuenta de Snowflake de este proyecto está en AWS (región `AWS_EU_WEST_3`, P
 | `git pull` en la carpeta de prod | Pipeline de despliegue | Ver CI/CD |
 
 **Flujo de un lote** (nombres de las tareas de la demo)
-1. `extract`: una tarea de MWAA localiza el zip del periodo en `raw/`, lo extrae a `landing/<periodo>/` y comprueba que están los 8 ficheros.
-2. `landing` (8 tareas en paralelo): cada tarea ejecuta `COPY INTO` de su entidad desde el stage externo.
-3. `generate_models` + `dbt_staging`, `dbt_raw_vault`, `dbt_business_vault`, `dbt_mart`: cada capa es una tarea de Fargate que genera los modelos y ejecuta `dbt build --select <capa>`, y deja `run_results.json` en el bucket.
-4. Una tarea ligera de Airflow lee los resultados y los registra en `CONTROL.PIPELINE_LOG`.
-5. `cleanup`: borra el prefijo `landing/<periodo>/`.
+1. `landing` (8 tareas en paralelo): cada tarea toma su fichero de `raw/<periodo>/` con el extractor `s3` y ejecuta `COPY INTO` de su entidad desde el stage externo.
+2. `generate_models` + `dbt_staging`, `dbt_raw_vault`, `dbt_business_vault`, `dbt_mart`: cada capa es una tarea de Fargate que genera los modelos y ejecuta `dbt build --select <capa>`, y deja `run_results.json` en el bucket.
+3. Una tarea ligera de Airflow lee los resultados y los registra en `CONTROL.PIPELINE_LOG`.
 
-**Parametrización.** `period` y `full_refresh` se pasan al lanzar el DAG, desde la interfaz de MWAA o desde su API; el periodo disponible se deduce de los zips presentes en `raw/`. Como evolución, una notificación de S3 al llegar un zip podría lanzar el DAG sola.
+**Parametrización.** `period` y `full_refresh` se pasan al lanzar el DAG, desde la interfaz de MWAA o desde su API; el periodo disponible se deduce de los prefijos presentes en `raw/`. Como evolución, una notificación de S3 al llegar un lote podría lanzar el DAG sola.
 
 **CI/CD.** GitHub Actions con identidad federada (OIDC) hacia AWS, sin claves guardadas. En cada PR ejecuta `dbt parse`, construye la imagen y comprueba que los DAGs se importan. Al fusionar en `dev` o `prod`: publica la imagen en ECR (la misma de dev a prod) y sincroniza `dags/` y `metadata/` con el bucket del entorno. Los scripts de Snowflake se ejecutan aparte.
 
 **Seguridad.** Una cuenta de AWS por entorno; roles de IAM mínimos (la tarea de dbt solo lee su secreto y escribe en su prefijo); bucket sin acceso público.
 
-**Qué hay que adaptar en el código.** Poco: el cargador usa el stage externo en lugar de `PUT`; `source.yml` pasa de una carpeta a un prefijo de S3; y `run_dbt` deja de ser un subproceso para lanzar una tarea de Fargate y leer su resultado.
+**Qué hay que adaptar en el código.** Poco: el cargador usa el stage externo en lugar de `PUT`; se añade un extractor `s3` y se cambia el `type` en `source.yml`; y `run_dbt` deja de ser un subproceso para lanzar una tarea de Fargate y leer su resultado.
 
 **Ventajas.** Casi sin operación; mismo región que Snowflake; permisos sin claves.
 **Inconvenientes.** MWAA tiene un coste fijo aunque no haya ejecuciones; hay que comprobar que la versión de Airflow que ofrece **coincide con la del proyecto (Airflow 3)**; queda atada a AWS.
@@ -132,8 +129,7 @@ En un caso real, la cuenta de Snowflake se crearía en una región de Azure para
 
 | En la demo | En Azure | Qué cambia |
 |---|---|---|
-| Carpeta `data/` | Contenedor de ADLS, `raw/` | Mismos zips |
-| `/tmp/dv_pipeline` | Contenedor ADLS, `landing/<periodo>/` | Sin disco local |
+| Carpeta `data/<periodo>/` | Contenedor de ADLS, `raw/<periodo>/` | Mismos CSV |
 | `PUT` + `COPY INTO` | Stage externo `azure://` + `COPY INTO` | *Storage integration* con una aplicación de Entra ID autorizada sobre la cuenta de almacenamiento |
 | Contenedores de Airflow y `postgres` | Pods de Airflow en AKS + PostgreSQL gestionado | El equipo opera Kubernetes |
 | DAGs y metadatos montados por volumen | Sincronización automática desde la rama del repositorio (*git-sync*) | Es el equivalente del `git pull` de prod, pero automático |
@@ -142,13 +138,13 @@ En un caso real, la cuenta de Snowflake se crearía en una región de Azure para
 | UI local | Interfaz de Airflow detrás de un acceso con autenticación | |
 | Dev y prod | Dos clústeres o dos espacios de nombres, dos cuentas de almacenamiento, idealmente dos suscripciones | |
 
-**Flujo de un lote.** Idéntico al de A (`extract` → `landing` ×8 → `generate_models` + dbt por capas → registro en `CONTROL` → `cleanup`), con los zips en ADLS y dbt como job de contenedor.
+**Flujo de un lote.** Idéntico al de A (`landing` ×8 → `generate_models` + dbt por capas → registro en `CONTROL`), con los CSV en ADLS y dbt como job de contenedor.
 
 **Parametrización.** `period` y `full_refresh` al lanzar el DAG desde la interfaz o la API de Airflow.
 
 **CI/CD.** GitHub Actions (o Azure DevOps) con federación de identidad hacia Azure: construye la imagen y la publica en ACR; los DAGs y metadatos llegan a Airflow por la sincronización con la rama; los scripts de Snowflake, aparte.
 
-**Qué hay que adaptar en el código.** Lo mismo que en A (stage externo, `source.yml` hacia ADLS, `run_dbt` lanzando un job) y además el despliegue de Airflow en Kubernetes.
+**Qué hay que adaptar en el código.** Lo mismo que en A (stage externo, un extractor para ADLS, `run_dbt` lanzando un job) y además el despliegue de Airflow en Kubernetes.
 
 **Ventajas.** Encaja si la organización ya es Azure; buena integración de identidad y secretos.
 **Inconvenientes.** Más operación que A (Kubernetes); la cuenta de Snowflake actual no es de Azure.
@@ -172,8 +168,7 @@ En un caso real, la cuenta de Snowflake se crearía en una región de Azure para
 
 | En la demo | En Google Cloud | Qué cambia |
 |---|---|---|
-| Carpeta `data/` | Bucket de GCS, `raw/` | Mismos zips |
-| `/tmp/dv_pipeline` | Prefijo `landing/<periodo>/` | Sin disco local |
+| Carpeta `data/<periodo>/` | Bucket de GCS, `raw/<periodo>/` | Mismos CSV |
 | `PUT` + `COPY INTO` | Stage externo `gcs://` + `COPY INTO` | *Storage integration*: Snowflake crea una cuenta de servicio a la que se da lectura sobre el bucket |
 | Contenedores de Airflow y `postgres` | Entorno de Cloud Composer | Se pierde el control del sistema operativo |
 | DAGs y metadatos montados por volumen | Carpeta de DAGs del bucket de Composer | El despliegue es sincronizar esa carpeta |
@@ -181,7 +176,7 @@ En un caso real, la cuenta de Snowflake se crearía en una región de Azure para
 | `.env` y `keys/` | Secret Manager (Composer lo usa como *secrets backend*) | |
 | Dev y prod | Dos entornos de Composer, dos buckets, idealmente dos proyectos de Google Cloud | |
 
-**Flujo de un lote.** Idéntico al de A, con los zips en GCS y dbt como job de Cloud Run.
+**Flujo de un lote.** Idéntico al de A, con los CSV en GCS y dbt como job de Cloud Run.
 
 **Parametrización.** `period` y `full_refresh` al lanzar el DAG desde la interfaz o la API de Composer.
 

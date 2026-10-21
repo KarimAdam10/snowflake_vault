@@ -8,13 +8,13 @@ SET etl_role    = 'DV_ETL_'      || $env;
 SET reader_role = 'DV_READER_'   || $env;
 
 -- 1) Base de datos y esquemas (SYSADMIN)
---    LANDING y MART son TRANSIENT: se reconstruyen desde el zip y desde el vault, y no necesitan Fail-safe.
+--    LANDING y MART son TRANSIENT: se reconstruyen desde los CSV de origen y desde el vault, y no necesitan Fail-safe.
 --    RAW_VAULT es permanente: es el histórico, la única copia que no se puede regenerar de otro sitio.
 USE ROLE SYSADMIN;
 CREATE DATABASE IF NOT EXISTS IDENTIFIER($db);
 USE DATABASE IDENTIFIER($db);
 
-CREATE TRANSIENT SCHEMA IF NOT EXISTS LANDING        COMMENT = 'Último lote tal cual llega del zip';
+CREATE TRANSIENT SCHEMA IF NOT EXISTS LANDING        COMMENT = 'Último lote tal cual llega de los CSV';
 CREATE SCHEMA           IF NOT EXISTS STAGING        COMMENT = 'Vistas con hash keys y hashdiff';
 CREATE SCHEMA           IF NOT EXISTS RAW_VAULT      COMMENT = 'Histórico Data Vault (hubs, links, satélites, referencias)';
 CREATE SCHEMA           IF NOT EXISTS BUSINESS_VAULT COMMENT = 'Reglas de negocio calculadas';

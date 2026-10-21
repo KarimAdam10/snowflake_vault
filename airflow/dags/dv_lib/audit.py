@@ -1,6 +1,6 @@
 """Trazabilidad operativa: cada etapa deja constancia en CONTROL.PIPELINE_LOG (Snowflake).
 
-Una fila por objeto procesado (zip, entidad cargada, modelo o test de dbt): qué ejecución de Airflow
+Una fila por objeto procesado (periodo, entidad cargada, modelo o test de dbt): qué ejecución de Airflow
 (`DAG_ID`, `RUN_ID`), qué periodo, qué etapa, cuántas filas, cuánto tardó y cómo terminó.
 El registro no bloquea el pipeline: si Snowflake no responde al registrar, se avisa en el log de la tarea.
 """
