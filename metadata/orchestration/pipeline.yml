@@ -11,16 +11,11 @@ defaults:
   retries: 1
   retry_delay_minutes: 1
 
-# Reintentos y timeout de la tarea que carga cada entidad a LANDING (una por contrato).
+# Reintentos y timeout de la tarea que carga cada entidad a LANDING (una por contrato):
+# `entity_defaults` vale para todas y `entities` solo lista las excepciones.
+entity_defaults: {retries: 2, retry_delay_minutes: 1}
 entities:
-  customer: {retries: 2, retry_delay_minutes: 1}
-  lineitem: {retries: 2, retry_delay_minutes: 1, execution_timeout_minutes: 10}
-  nation: {retries: 2, retry_delay_minutes: 1}
-  orders: {retries: 2, retry_delay_minutes: 1}
-  part: {retries: 2, retry_delay_minutes: 1}
-  partsupp: {retries: 2, retry_delay_minutes: 1}
-  region: {retries: 2, retry_delay_minutes: 1}
-  supplier: {retries: 2, retry_delay_minutes: 1}
+  lineitem: {execution_timeout_minutes: 10}
 
 # Etapas disponibles. `type` decide qué hace; `depends_on` son sus dependencias (solo se respetan
 # las que pertenezcan al pipeline que las usa).
@@ -28,7 +23,7 @@ stages:
   extract:
     type: extract_archive            # descomprime el zip del periodo y comprueba que están todos los ficheros
   landing:
-    type: load_landing               # una tarea por contrato: CSV -> LANDING (último lote)
+    type: load_landing               # una tarea por contrato: CSV -> LANDING (según load.type)
     depends_on: [extract]
   generate_models:
     type: generate_models            # regenera los modelos dbt desde metadata/ (transformación dirigida por metadatos)
@@ -62,8 +57,3 @@ pipelines:
     schedule: null
     tags: [end-to-end]
     stages: [extract, landing, generate_models, dbt_staging, dbt_raw_vault, dbt_business_vault, dbt_mart, cleanup]
-  dv_landing_only:
-    description: "Solo ingesta: zip -> LANDING (sustituye al último lote)"
-    schedule: null
-    tags: [ingestion]
-    stages: [extract, landing, cleanup]

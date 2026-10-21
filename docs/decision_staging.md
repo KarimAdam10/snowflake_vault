@@ -8,7 +8,7 @@
 
 El flujo es `CSV → LANDING → (STAGING) → RAW_VAULT → BUSINESS_VAULT → MART`.
 
-LANDING se carga con un cargador genérico (`landing/loader.py`) que solo conoce ficheros, columnas y tipos (contratos de `metadata/ingestion/contracts/`). Guarda el **último lote**: cada carga sustituye a la anterior; el histórico vive en el vault.
+LANDING se carga con un cargador genérico (`landing/loader.py`) que solo conoce ficheros, columnas y tipos (contratos de `metadata/ingestion/contracts/`). Según `load.type` del contrato: una entidad `snapshot` guarda el **último lote** (cada carga sustituye a la anterior); una `incremental` **acumula** los lotes (relanzar un periodo solo sustituye ese periodo; `full_refresh` parte de cero). El histórico vive en el vault.
 
 Para cargar hubs, links y satélites hace falta calcular, a partir de cada fila de landing:
 
@@ -28,7 +28,7 @@ Se añade una capa **STAGING** compuesta por **una vista dbt por entidad** (`STA
 
 Características:
 
-- **No almacena datos**: son vistas; el único almacén es LANDING (último lote) y el vault (histórico).
+- **No almacena datos**: son vistas; el único almacén es LANDING (último lote o lotes acumulados, según `load.type`) y el vault (histórico).
 - **Se genera, no se escribe**: `dbt/scripts/generate_models.py` produce los 8 modelos a partir de `metadata/vault/vault.yml` y los contratos. No hay código de staging mantenido a mano.
 - **LANDING sigue siendo genérica**: no conoce claves de negocio ni el modelo del vault.
 
@@ -62,65 +62,7 @@ Viable y habitual en DV 2.0. Se descarta porque:
 
 ## 5. Alternativa sin staging y sin AutomateDV (macros propias)
 
-Si se renunciara a AutomateDV, la capa de staging desaparece: cada modelo del vault calcula el hash directamente desde LANDING mediante una macro propia. Es una arquitectura distinta, equivalente en resultado.
-
-**Esquema** (boceto de diseño, **no probado** en este proyecto):
-
-```
-LANDING ──► hub_customer   (calcula CUSTOMER_HK)
-        ──► sat_customer   (calcula CUSTOMER_HK y CUSTOMER_HASHDIFF)
-        ──► lnk_*          (calcula las HK de sus hubs y la del link)
-```
-
-Macro de hash, definida una vez:
-
-```sql
-{% macro dv_hash(cols) -%}
-MD5_BINARY(CONCAT_WS('||',
-  {%- for c in cols %}
-  IFNULL(NULLIF(UPPER(TRIM(CAST({{ c }} AS VARCHAR))), ''), '^^'){{ ',' if not loop.last }}
-  {%- endfor %}))
-{%- endmacro %}
-```
-
-Hub (inserta solo claves nuevas):
-
-```sql
-{{ config(materialized='incremental') }}
-SELECT {{ dv_hash(['C_CUSTKEY']) }} AS CUSTOMER_HK,
-       C_CUSTKEY,
-       LAST_DAY(TO_DATE(_PERIOD || '01', 'YYYYMMDD')) AS LOAD_DATETIME,
-       _SOURCE_FILE AS RECORD_SOURCE
-FROM {{ source('landing', 'LND_CUSTOMER') }}
-{% if is_incremental() %}
-WHERE {{ dv_hash(['C_CUSTKEY']) }} NOT IN (SELECT CUSTOMER_HK FROM {{ this }})
-{% endif %}
-```
-
-Satélite (inserta si la clave es nueva o cambia el hashdiff respecto a la última versión):
-
-```sql
-{{ config(materialized='incremental') }}
-WITH src AS (
-  SELECT {{ dv_hash(['C_CUSTKEY']) }} AS CUSTOMER_HK,
-         {{ dv_hash(['C_NAME','C_ADDRESS','C_PHONE','C_ACCTBAL','C_MKTSEGMENT','C_COMMENT']) }} AS CUSTOMER_HASHDIFF,
-         C_NAME, C_ADDRESS, C_PHONE, C_ACCTBAL, C_MKTSEGMENT, C_COMMENT,
-         LAST_DAY(TO_DATE(_PERIOD || '01', 'YYYYMMDD')) AS LOAD_DATETIME,
-         _SOURCE_FILE AS RECORD_SOURCE
-  FROM {{ source('landing', 'LND_CUSTOMER') }}
-)
-SELECT s.*
-FROM src s
-{% if is_incremental() %}
-LEFT JOIN (
-  SELECT CUSTOMER_HK, CUSTOMER_HASHDIFF FROM {{ this }}
-  QUALIFY ROW_NUMBER() OVER (PARTITION BY CUSTOMER_HK ORDER BY LOAD_DATETIME DESC) = 1
-) cur ON cur.CUSTOMER_HK = s.CUSTOMER_HK
-WHERE cur.CUSTOMER_HK IS NULL OR cur.CUSTOMER_HASHDIFF <> s.CUSTOMER_HASHDIFF
-{% endif %}
-```
-
-Nota: AutomateDV expone una macro suelta de hash (`automate_dv.hash`, en `macros/supporting/hash.sql` del paquete instalado) que podría sustituir a `dv_hash` y dar **hashes idénticos** a los actuales, pero entonces los cargadores seguirían siendo propios.
+Si se renunciara a AutomateDV, la capa de staging desaparecería: cada hub, link y satélite calcularía el hash directamente desde LANDING con una macro propia (normalización con `UPPER(TRIM(...))`, nulos como `'^^'`, separador `'||'` y MD5 binario) y llevaría a mano la lógica incremental: el hub inserta las claves nuevas y el satélite inserta una versión cuando la clave es nueva o cambia el hashdiff respecto a la última. Es una arquitectura distinta con el mismo resultado; **no está probada** en este proyecto. AutomateDV también expone una macro suelta de hash (`automate_dv.hash`) que daría hashes idénticos a los actuales.
 
 ### Comparación
 

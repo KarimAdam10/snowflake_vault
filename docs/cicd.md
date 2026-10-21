@@ -65,7 +65,8 @@ La rama por defecto es `dev`: los PR nuevos apuntan a ella, y llevar algo a `pro
 | Flujo de ramas con PR: rama de trabajo → `dev` (PR #1) → `prod` (PR #2) | Verificado: ambos PR fusionados |
 | Dev: carga de los dos lotes con `SVC_DV_DEV` y 16 tablas con los recuentos esperados | Verificado (120 de 120 modelos y tests por lote) |
 | Dev no puede escribir ni ver `DV_PIPELINE_PROD` | Verificado con el usuario de servicio (ver [snowflake.md](snowflake.md#cómo-comprobar-el-aislamiento)) |
-| Prod: carga con el usuario de servicio `SVC_DV_PROD` | Pendiente: prod se cargó antes con el usuario personal; falta cambiar su `.env` y recargar |
+| Prod: carga de los dos lotes con `SVC_DV_PROD` (120 de 120 modelos y tests por lote), 1.050 líneas en `fact_lineitem`, Raw Vault permanente y aislamiento con dev | Verificado (carga lanzada por línea de comandos con el usuario de servicio) |
+| Prod: ejecución desde Airflow (puerto 8081) con el `.env` de prod ya apuntando a `SVC_DV_PROD` | Pendiente de confirmar |
 
 ## Límites y pendientes
 

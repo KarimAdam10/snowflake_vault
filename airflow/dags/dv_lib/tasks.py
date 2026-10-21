@@ -38,7 +38,7 @@ def extract_archive():
         archive = loader.extract_archive(ctx["period"], workdir)
         files = loader.check_contents(workdir)
         ev["rows"] = len(files)
-        ev["message"] = f"{archive.name} sha256={loader.file_checksum(archive)}"
+        ev["message"] = archive.name
         print(f"{archive.name}: {len(files)} ficheros -> {workdir}")
 
 
@@ -47,7 +47,7 @@ def load_landing(entity):
     contract = loader.load_contract(entity)
     with audit.tracked(ctx, "landing", entity) as ev:
         with get_connection() as conn, conn.cursor(DictCursor) as cur:
-            rows = loader.run(conn, cur, entity, ctx["period"], _workdir(ctx["period"]))
+            rows = loader.run(conn, cur, entity, ctx["period"], _workdir(ctx["period"]), ctx["full_refresh"])
         ev["rows"] = rows
         print(f"{entity} {ctx['period']}: {rows} filas cargadas")
         if contract["load"]["type"] == "snapshot" and rows == 0:
