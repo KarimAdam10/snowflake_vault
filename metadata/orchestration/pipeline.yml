@@ -1,33 +1,23 @@
-# Metadatos de orquestación: de aquí se generan los DAGs de Airflow (airflow/dags/dv_pipelines.py).
-# Cambiar este fichero cambia el pipeline sin tocar código: el dag-processor de Airflow lo vuelve a
-# leer en su siguiente refresco.
-#
-# El flujo y sus dependencias se declaran aquí; las tareas de carga a LANDING se generan una por
-# contrato (metadata/ingestion/contracts/<entidad>.yml); sus reintentos y timeout se declaran aquí, en
-# `entities`. De dónde sale cada dato lo define el origen de cada contrato (metadata/ingestion/source.yml).
+# De este fichero salen los DAGs de Airflow (airflow/dags/dv_pipelines.py).
 
-# Valores por defecto de las tareas; `entities` los sobrescribe para la carga de cada entidad.
+# Reintentos por defecto de todas las tareas
 defaults:
   retries: 1
   retry_delay_minutes: 1
 
-# Reintentos y timeout de la tarea que carga cada entidad a LANDING (una por contrato):
-# `entity_defaults` vale para todas y `entities` solo lista las excepciones.
+# Reintentos de las tareas de carga (una por contrato). `entities` solo lista las excepciones.
 entity_defaults: {retries: 2, retry_delay_minutes: 1}
 entities:
   lineitem: {execution_timeout_minutes: 10}
 
-# Etapas disponibles. `type` decide qué hace; `depends_on` son sus dependencias (solo se respetan
-# las que pertenezcan al pipeline que las usa).
+# Etapas. `type` dice qué hacen y `depends_on` de cuáles dependen.
 stages:
   landing:
-    type: load_landing               # una tarea por contrato: extrae del origen del contrato y carga a LANDING (según load.type)
+    type: load_landing      # una tarea por contrato
   generate_models:
-    type: generate_models            # regenera los modelos dbt desde metadata/ (transformación dirigida por metadatos)
-  # Cada etapa dbt ejecuta `dbt build` de su capa (modelos + tests). Los tests que dependen de capas
-  # posteriores (aún sin reconstruir) se excluyen solos: la factoría deduce qué capas están aguas abajo.
+    type: generate_models   # genera los modelos de staging y Raw Vault
   dbt_staging:
-    type: dbt
+    type: dbt               # cada etapa dbt ejecuta `dbt build` de su capa
     select: staging
     depends_on: [landing, generate_models]
   dbt_raw_vault:
@@ -43,7 +33,7 @@ stages:
     select: mart
     depends_on: [dbt_business_vault]
 
-# Pipelines = DAGs de Airflow. Cada uno es una selección de etapas.
+# Cada pipeline es un DAG con las etapas que se listen
 pipelines:
   dv_end_to_end:
     description: "Lote completo: CSV -> LANDING -> STAGING -> RAW_VAULT -> BUSINESS_VAULT -> MART"
