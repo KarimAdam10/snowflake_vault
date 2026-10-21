@@ -14,11 +14,11 @@ from airflow.providers.standard.operators.python import PythonOperator
 from airflow.sdk import DAG, Param, TaskGroup, TriggerRule
 
 from dv_lib import tasks
-from landing import loader
+from landing import extract, loader
 
 CFG = loader.load_pipeline_config()
 DEFAULTS = CFG.get("defaults", {})
-PERIODS = loader.list_periods()          # un periodo por cada lote disponible
+PERIODS = extract.list_periods()          # un periodo por cada lote disponible
 
 
 def _retry_args(source):

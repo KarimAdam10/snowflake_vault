@@ -1,5 +1,5 @@
 # Orígenes de los datos. Cada contrato nombra el suyo en `source.name`; `type` elige el extractor (registro
-# EXTRACTORS de landing/loader.py) y el resto de claves son los parámetros de ese extractor. Cambiar de origen
+# EXTRACTORS de landing/extract.py) y el resto de claves son los parámetros de ese extractor. Cambiar de origen
 # (S3, SharePoint, una API...) es añadir un extractor y declarar aquí un origen con su type: contratos, carga y
 # dbt no cambian.
 sources:
