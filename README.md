@@ -32,7 +32,7 @@ Orquestado por Airflow · transformado por dbt (+ AutomateDV) · trazado en CONT
 airflow/dags/
   dv_pipelines.py      Factoría: genera los DAGs de Airflow desde metadata/orchestration/pipeline.yml
   dv_lib/              Qué ejecuta cada etapa (tasks.py) y cómo se registra en CONTROL (audit.py)
-landing/               Ingesta genérica CSV -> LANDING (loader.py, snowflake_conn.py)
+landing/               Ingesta genérica -> LANDING: extract.py (extractores por origen), loader.py (carga) y snowflake_conn.py
 metadata/              Todos los metadatos, una carpeta por tema
   ingestion/             contracts/<entidad>.yml (fichero, columnas, tipos, tipo de carga) y source.yml (los orígenes: el `type` de cada uno elige el extractor)
   vault/                 vault.yml (hubs, links, satélites y tablas de referencia del Raw Vault)
@@ -84,17 +84,18 @@ Hay dos entornos, dev y prod: dos clones del repo, cada uno con su `.env` y su b
    | Variable | Para qué |
    |---|---|
    | `SNOWFLAKE_ACCOUNT` (formato `ORG-CUENTA`), `SNOWFLAKE_USER`, `SNOWFLAKE_ROLE`, `SNOWFLAKE_WAREHOUSE`, `SNOWFLAKE_DATABASE` | Conexión. En dev: `SVC_DV_DEV`, `DV_ETL_DEV`, `WH_DV_DEV`, `DV_PIPELINE_DEV`; en prod, lo mismo con `PROD`. Se crean con `snowflake/` (ver [docs/snowflake.md](docs/snowflake.md)) |
-   | `SNOWFLAKE_PASSWORD` **o** `SNOWFLAKE_PRIVATE_KEY_PATH` (+ `SNOWFLAKE_PRIVATE_KEY_PASSPHRASE` si la clave la tiene) | Autenticación. Con par de claves, la ruta es la del contenedor: `/opt/keys/rsa_key.p8` |
+   | `SNOWFLAKE_PRIVATE_KEY_PATH` (+ `SNOWFLAKE_PRIVATE_KEY_PASSPHRASE` si la clave la tiene) | Autenticación por par de claves. La ruta es la del contenedor: `/opt/keys/rsa_key.p8` |
    | `SNOWFLAKE_SCHEMA` (opcional) | Esquema por defecto de la conexión (dbt usa `PUBLIC` si falta) |
    | `AIRFLOW_FERNET_KEY`, `AIRFLOW_JWT_SECRET` | Secretos locales de Airflow |
    | `AIRFLOW_UID`, `AIRFLOW_VERSION`, `AIRFLOW_PORT` (opcionales) | Por defecto `50000`, `3.3.2` y `8080`. Pon `AIRFLOW_PORT=8081` en prod si los dos stacks corren a la vez |
 
-2. **Autenticación por par de claves (recomendada).**
+2. **Autenticación por par de claves.**
    ```bash
+   mkdir keys
    openssl genrsa 2048 | openssl pkcs8 -topk8 -inform PEM -out keys/rsa_key.p8 -nocrypt
    openssl rsa -in keys/rsa_key.p8 -pubout -out keys/rsa_key.pub
    ```
-   En Snowsight: `ALTER USER <TU_USUARIO> SET RSA_PUBLIC_KEY='MIIBIjANBgkq...';` (el contenido de `rsa_key.pub` sin las líneas BEGIN/END). Con MFA activo, la contraseña no sirve.
+   En Snowsight: `ALTER USER <TU_USUARIO> SET RSA_PUBLIC_KEY='MIIBIjANBgkq...';` (el contenido de `rsa_key.pub` sin las líneas BEGIN/END).
 
 3. **Construir y arrancar.**
    ```powershell
@@ -162,11 +163,10 @@ Se ejecutó el flujo real con los dos lotes y se comprobó que **todo coincide c
 
 - **Orden de los lotes:** el vault asume lotes en orden cronológico. Procesar un periodo anterior sin `full_refresh` rompe el historial.
 - **`ref_table` conserva la primera versión** de cada código; un test compara cada tabla de referencia con su staging y falla si divergen.
-- **`load.type`** (`snapshot`/`incremental`) casi no tiene efecto: solo hace fallar una entidad `snapshot` con cero filas.
+- **`load.type`** (`snapshot`/`incremental`) solo decide cómo se carga LANDING (un `snapshot` sustituye el contenido y falla con cero filas; un `incremental` acumula los lotes). No cambia el staging ni el vault: la detección de borrados está en `docs/mejoras_futuras.md`.
 - **Cada hub se carga desde una sola entidad.** Con estos datos no hay claves huérfanas (se comprobó); con otros, habría que cargar el hub desde todas las fuentes que traen la clave.
 - **Las claves de negocio de las dimensiones** están escritas en su SQL y también en `vault.yml`: si cambia una, hay que cambiar las dos.
 - **`dim_date`** genera hasta 3660 días desde la fecha mínima; los tests del hecho avisarían si los datos abarcaran más.
-- **Entorno:** el DAG antiguo `01_load_landing` sigue registrado en la base de datos de Airflow aunque su fichero ya no existe. Se puede retirar con `airflow dags delete 01_load_landing`.
 - **Datos en git:** `data/` está en `.gitignore`: los datos de entrada nunca van al repositorio y se colocan a mano en cada entorno (en la nube, un bucket).
 
 ## Problemas frecuentes
@@ -178,7 +178,6 @@ Se ejecutó el flujo real con los dos lotes y se comprobó que **todo coincide c
 | `dbt debug` falla en la conexión | Revisa `SNOWFLAKE_ACCOUNT`, que `SNOWFLAKE_DATABASE` exista y, con par de claves, que la clave pública esté asignada al usuario |
 | `390100 Incorrect username or password` | Credenciales distintas dentro del contenedor: tras cambiar `.env`, recrea con `docker compose up -d --force-recreate` |
 | `Creating schema on shared database 'SNOWFLAKE_SAMPLE_DATA' is not allowed` | `SNOWFLAKE_DATABASE` apunta a la base de datos de ejemplo: usa una propia (p. ej. `DV_PIPELINE_DEV`) |
-| Error de MFA con contraseña | Usa autenticación por par de claves |
 | Tras un `git pull` los DAGs o dbt fallan por una librería | Cambió `Dockerfile` o `requirements-*.txt`: `docker compose up -d --build` |
 | El DAG no aparece | Espera ~10 s (el dag-processor refresca) o revisa `docker compose logs airflow-dag-processor` |
 | El run sale en rojo en una capa dbt | Mira la tarea en Airflow y `CONTROL.PIPELINE_LOG` (qué modelo o test falló y con qué mensaje) |
@@ -193,18 +192,14 @@ Lo que queda por hacer, y solo esto, para dejar el proyecto desplegable: el CI/C
 
 Implementado: flujo de ramas `dev` → `prod` por pull request, CI sin Snowflake y dos entornos con su base de datos (ver [docs/cicd.md](docs/cicd.md)). Falta:
 
-- [ ] **Confirmar la primera carga en prod** con su usuario de servicio (ver Snowflake, más abajo y [docs/cicd.md](docs/cicd.md#estado)).
 - [ ] **Integración contra Snowflake**: base de datos efímera por ejecución, cargar los dos lotes, `dbt build` y borrarla. Requiere un rol de CI acotado y secretos en GitHub.
 - [ ] **Convertir en tests automáticos la verificación independiente** contra los CSV (recuentos, importes, versiones SCD2). Hoy son scripts fuera del repositorio.
 - [ ] **Publicar la imagen** (p. ej. en GitHub Container Registry) en lugar de construirla en cada clon.
-- [ ] **Datos fuera del repo** en un entorno real (ver límites conocidos).
 
 ### Permisos, roles y objetos de Snowflake
 
 Implementado: roles por entorno, usuarios de servicio con clave, warehouses con tope de coste, base de datos y esquemas como código y Raw Vault permanente (ver [docs/snowflake.md](docs/snowflake.md)). Falta:
 
-- [ ] **Pasar prod al diseño nuevo:** `DV_PIPELINE_PROD` se cargó antes del rol `DV_ETL_PROD`; hay que cambiar su `.env` a `SVC_DV_PROD` y recargar con `full_refresh=true` para que sus tablas queden como las de dev (Raw Vault permanente, `LANDING` transitoria).
 - [ ] **Política de red** para el acceso al servicio y gestión de secretos y claves fuera de ficheros locales.
-- [ ] **Rol de CI** acotado y base de datos efímera para la integración continua.
 - [ ] **Separar cargador y transformador** (dos usuarios) si se quiere el mínimo privilegio estricto: hoy un solo rol por entorno hace la carga y dbt.
 - [ ] **Edición Enterprise** (si se quiere): Time Travel de varios días en el Raw Vault y warehouses multi-clúster.

@@ -11,7 +11,7 @@ Cambiar metadata/orchestration/pipeline.yml o los contratos cambia los DAGs en e
 from datetime import datetime, timedelta
 
 from airflow.providers.standard.operators.python import PythonOperator
-from airflow.sdk import DAG, Param, TaskGroup, TriggerRule
+from airflow.sdk import DAG, Param, TaskGroup
 
 from dv_lib import tasks
 from landing import extract, loader
@@ -29,11 +29,8 @@ def _retry_args(source):
     return args
 
 
-def _task(task_id, fn, stage_cfg=None, op_kwargs=None, **orch):
-    extra = {}
-    if (stage_cfg or {}).get("trigger_rule"):
-        extra["trigger_rule"] = TriggerRule(stage_cfg["trigger_rule"])
-    return PythonOperator(task_id=task_id, python_callable=fn, op_kwargs=op_kwargs or {}, **orch, **extra)
+def _task(task_id, fn, op_kwargs=None, **orch):
+    return PythonOperator(task_id=task_id, python_callable=fn, op_kwargs=op_kwargs or {}, **orch)
 
 
 def _downstream_dbt_selects(name):
@@ -55,14 +52,13 @@ def _build_stage(name, cfg):
         with TaskGroup(group_id=name) as group:
             for entity in loader.list_entities():
                 orch = {**CFG.get("entity_defaults", {}), **CFG.get("entities", {}).get(entity, {})}
-                _task(entity, tasks.load_landing, cfg, {"entity": entity}, **_retry_args(orch))
+                _task(entity, tasks.load_landing, {"entity": entity}, **_retry_args(orch))
         return group
     if kind == "generate_models":
-        return _task(name, tasks.generate_models, cfg, **_retry_args(cfg))
+        return _task(name, tasks.generate_models, **_retry_args(cfg))
     if kind == "dbt":
-        exclude = cfg.get("exclude") or " ".join(_downstream_dbt_selects(name))
-        return _task(name, tasks.run_dbt, cfg, {"stage": name, "select": cfg["select"], "exclude": exclude},
-                     **_retry_args(cfg))
+        exclude = " ".join(_downstream_dbt_selects(name))
+        return _task(name, tasks.run_dbt, {"stage": name, "select": cfg["select"], "exclude": exclude}, **_retry_args(cfg))
     raise ValueError(f"Etapa '{name}': tipo desconocido '{kind}'")
 
 

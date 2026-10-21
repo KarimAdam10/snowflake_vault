@@ -6,9 +6,7 @@ profile: dv_snowflake
 model-paths: ["models"]
 macro-paths: ["macros"]
 test-paths: ["tests"]
-seed-paths: ["seeds"]
 target-path: "target"
-clean-targets: ["target", "dbt_packages"]
 
 # Capas: staging (vistas) -> raw_vault (histórico) -> business_vault (reglas, vistas) -> mart (tablas)
 models:
