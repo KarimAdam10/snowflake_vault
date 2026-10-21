@@ -4,7 +4,7 @@
 #   hubs:             una clave de negocio.        hub_x: {source: <entidad>, key: [columnas]}
 #   links:            relación entre hubs.         lnk_x: {source: <entidad>, hubs: {hub: [columnas fk]}, child_key: [...]}
 #   satellites:       atributos con historial.     sat_x: {parent: <hub|link>, source: <entidad>}
-#                     payload por defecto = columnas de la entidad que no son claves ni fk.
+#                     payload = columnas de la entidad que no son claves ni fk.
 #   reference_tables: catálogos de códigos.        ref_x: {source: <entidad>, key: [columnas]}
 #                     sin hash key ni satélite; guarda la primera versión de cada código.
 # Regla: una entidad alimenta como mucho un satélite.

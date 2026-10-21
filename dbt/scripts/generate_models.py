@@ -57,7 +57,7 @@ def key_columns(entity, vault):
 
 
 def payload_columns(sat, vault, columns):
-    return sat.get("payload") or [c for c in columns if c not in key_columns(sat["source"], vault)]
+    return [c for c in columns if c not in key_columns(sat["source"], vault)]
 
 
 def hashed_columns(entity, vault, columns):
@@ -106,7 +106,7 @@ def raw_vault_models(vault, contracts):
         if l.get("child_key"):
             args.append(("src_extra_columns", [c.upper() for c in l["child_key"]]))
         tests = [{"name": pk, "tests": ["unique", "not_null"]}] + [
-            {"name": hash_name(h), "tests": [{"relationships": {"to": f"ref('{h}')", "field": hash_name(h)}}]}
+            {"name": hash_name(h), "tests": [{"relationships": {"arguments": {"to": f"ref('{h}')", "field": hash_name(h)}}}]}
             for h in l["hubs"]]
         models[name] = (render("link", args, l["source"]), {"columns": tests})
     for name, s in vault["satellites"].items():
@@ -116,8 +116,8 @@ def raw_vault_models(vault, contracts):
                 ("src_payload", [c.upper() for c in payload_columns(s, vault, columns)])]
         models[name] = (render("sat", args, s["source"]), {
             "columns": [{"name": pk, "tests": ["not_null",
-                         {"relationships": {"to": f"ref('{s['parent']}')", "field": pk}}]}],
-            "tests": [{"dbt_utils.unique_combination_of_columns": {"combination_of_columns": [pk, "LOAD_DATETIME"]}}]})
+                         {"relationships": {"arguments": {"to": f"ref('{s['parent']}')", "field": pk}}}]}],
+            "tests": [{"dbt_utils.unique_combination_of_columns": {"arguments": {"combination_of_columns": [pk, "LOAD_DATETIME"]}}}]})
     for name, r in vault.get("reference_tables", {}).items():
         attrs = [c["name"] for c in contracts[r["source"]]["columns"] if c["name"] not in r["key"]]
         key = [{"name": c.upper(), "tests": ["unique", "not_null"]} for c in r["key"]]

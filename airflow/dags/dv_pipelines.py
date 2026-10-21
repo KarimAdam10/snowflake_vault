@@ -56,7 +56,7 @@ def _build_stage(name, cfg):
     if kind == "load_landing":
         with TaskGroup(group_id=name) as group:
             for entity in loader.list_entities():
-                orch = CFG.get("entities", {}).get(entity, {})
+                orch = {**CFG.get("entity_defaults", {}), **CFG.get("entities", {}).get(entity, {})}
                 _task(entity, tasks.load_landing, cfg, {"entity": entity}, **_retry_args(orch))
         return group
     if kind == "generate_models":

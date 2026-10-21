@@ -1,6 +1,5 @@
 # De dónde sale cada lote de entrada (un zip por periodo). {period} = YYYYMM.
 # El patrón admite comodines (p. ej. "202512_sample (1).zip"). Los periodos disponibles son los de
 # los zips encontrados en `directory` (relativo a la raíz del proyecto).
-type: zip
 directory: data
 pattern: "{period}_sample*.zip"
