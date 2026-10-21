@@ -1,15 +1,12 @@
-"""Genera los modelos dbt de STAGING y RAW_VAULT desde metadata/ingestion/contracts/*.yml y metadata/vault/vault.yml.
+"""Genera los modelos de dbt de STAGING y RAW_VAULT a partir de los metadatos.
 
-- stg_<entidad>: añade hash keys, hashdiff, LOAD_DATETIME y RECORD_SOURCE (automate_dv.stage).
-- hub_*, lnk_*, sat_*: un modelo por objeto del vault (automate_dv.hub / link / sat) + sus tests.
-- ref_*: tablas de referencia (automate_dv.ref_table) + un test que las compara con su staging.
-El Business Vault (dbt/models/business_vault) y el mart (dbt/models/mart) son modelos SQL escritos a mano.
-Para añadir una entidad: contrato + metadatos del vault y volver a ejecutar.
+Lee metadata/ingestion/contracts/*.yml y metadata/vault/vault.yml y escribe:
+  - dbt/models/staging: una vista stg_<entidad> por contrato
+  - dbt/models/raw_vault: un modelo por hub, link, satélite y tabla de referencia, con sus tests
+  - dbt/tests: un test por cada tabla de referencia
 
-Uso (en el contenedor):  python /opt/dbt/scripts/generate_models.py
-
-Los modelos generados NO se versionan en git (están en .gitignore): cada entorno los genera en la etapa
-`generate_models` del DAG, antes de ejecutar dbt.
+Los modelos generados no se suben a git: se generan en cada ejecución del DAG.
+Uso: python generate_models.py
 """
 import os
 from pathlib import Path
@@ -17,11 +14,14 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(os.environ.get("PROJECT_ROOT", "/opt/project"))
-OUT = Path(__file__).resolve().parents[1] / "models" / "staging"
-RV = Path(__file__).resolve().parents[1] / "models" / "raw_vault"
-TESTS = Path(__file__).resolve().parents[1] / "tests"
+DBT_DIR = Path(__file__).resolve().parents[1]
+STAGING_DIR = DBT_DIR / "models" / "staging"
+RAW_VAULT_DIR = DBT_DIR / "models" / "raw_vault"
+TESTS_DIR = DBT_DIR / "tests"
 
-TEMPLATE = """{{# Generado por dbt/scripts/generate_models.py. No editar a mano. #}}
+HEADER = "{# Generado por dbt/scripts/generate_models.py. No editar a mano. #}\n"
+
+STAGING_TEMPLATE = """{{# Generado por dbt/scripts/generate_models.py. No editar a mano. #}}
 {{%- set yaml_metadata -%}}
 {metadata}{{%- endset -%}}
 
@@ -33,179 +33,218 @@ TEMPLATE = """{{# Generado por dbt/scripts/generate_models.py. No editar a mano.
                      hashed_columns=metadata_dict['hashed_columns']) }}}}
 """
 
+# Columnas que llevan todos los modelos del Raw Vault
+COMMON_ARGS = "src_ldts='LOAD_DATETIME',\n   src_source='RECORD_SOURCE',\n   source_model='stg_{source}'"
 
-def hash_name(obj_name):
+
+def hash_name(object_name):
     """hub_customer -> CUSTOMER_HK ; lnk_customer_nation -> CUSTOMER_NATION_HK"""
-    return obj_name.split("_", 1)[1].upper() + "_HK"
+    return object_name.split("_", 1)[1].upper() + "_HK"
 
 
-def upper(cols):
-    cols = [c.upper() for c in cols]
-    return cols[0] if len(cols) == 1 else cols
+def upper(columns):
+    """Pasa las columnas a mayúsculas. Si es una sola, devuelve el texto en vez de la lista."""
+    columns = [c.upper() for c in columns]
+    return columns[0] if len(columns) == 1 else columns
+
+
+def link_columns(link):
+    """Todas las columnas que forman un link: las claves de sus hubs y la clave hija."""
+    columns = [c for cols in link["hubs"].values() for c in cols]
+    return columns + link.get("child_key", [])
 
 
 def key_columns(entity, vault):
-    """Columnas de la entidad que son claves o fk: no forman parte del payload del satélite."""
+    """Columnas de la entidad que son clave de un hub o de un link: no van en el payload del satélite."""
     used = []
-    for h in vault["hubs"].values():
-        if h["source"] == entity:
-            used += h["key"]
-    for l in vault["links"].values():
-        if l["source"] == entity:
-            used += [c for cols in l["hubs"].values() for c in cols] + l.get("child_key", [])
+    for hub in vault["hubs"].values():
+        if hub["source"] == entity:
+            used += hub["key"]
+    for link in vault["links"].values():
+        if link["source"] == entity:
+            used += link_columns(link)
     return used
 
 
 def payload_columns(sat, vault, columns):
-    return [c for c in columns if c not in key_columns(sat["source"], vault)]
+    keys = key_columns(sat["source"], vault)
+    return [c for c in columns if c not in keys]
 
 
 def hashed_columns(entity, vault, columns):
-    """Hash keys que necesita el stage de una entidad, según los metadatos del vault."""
+    """Las claves hash que hay que calcular en el staging de una entidad."""
     hashed = {}
-    for hub, h in vault["hubs"].items():
-        if h["source"] == entity:
-            hashed[hash_name(hub)] = upper(h["key"])
-    for link, l in vault["links"].items():
-        if l["source"] != entity:
-            continue
-        for hub, cols in l["hubs"].items():          # hash de cada hub referenciado
-            hashed.setdefault(hash_name(hub), upper(cols))
-        link_cols = [c for cols in l["hubs"].values() for c in cols] + l.get("child_key", [])
-        hashed[hash_name(link)] = upper(link_cols)
 
+    # Un hash por cada hub que carga esta entidad
+    for hub_name, hub in vault["hubs"].items():
+        if hub["source"] == entity:
+            hashed[hash_name(hub_name)] = upper(hub["key"])
+
+    # Por cada link de esta entidad: el hash de cada hub que une y el hash del propio link
+    for link_name, link in vault["links"].items():
+        if link["source"] != entity:
+            continue
+        for hub_name, cols in link["hubs"].items():
+            hashed.setdefault(hash_name(hub_name), upper(cols))
+        hashed[hash_name(link_name)] = upper(link_columns(link))
+
+    # El hashdiff (para detectar cambios) si la entidad alimenta un satélite
     sats = [s for s in vault["satellites"].values() if s["source"] == entity]
     if len(sats) > 1:
         raise SystemExit(f"{entity}: una entidad solo puede alimentar un satélite")
     for sat in sats:
-        hashed[f"{entity.upper()}_HASHDIFF"] = {
-            "is_hashdiff": True, "columns": [c.upper() for c in payload_columns(sat, vault, columns)]}
+        payload = [c.upper() for c in payload_columns(sat, vault, columns)]
+        hashed[f"{entity.upper()}_HASHDIFF"] = {"is_hashdiff": True, "columns": payload}
     return hashed
 
 
-# ---- Raw Vault: un modelo por hub, link y satélite ----
-COMMON = "src_ldts='LOAD_DATETIME',\n   src_source='RECORD_SOURCE',\n   source_model='stg_{source}'"
-HEADER = "{# Generado por dbt/scripts/generate_models.py. No editar a mano. #}\n"
-
-
 def render(macro, args, source):
-    body = ",\n   ".join(f"{k}={v!r}" for k, v in args) + ",\n   " + COMMON.format(source=source)
+    """Escribe el modelo: una llamada a la macro de automate_dv."""
+    body = ",\n   ".join(f"{name}={value!r}" for name, value in args)
+    body += ",\n   " + COMMON_ARGS.format(source=source)
     return f"{HEADER}{{{{ automate_dv.{macro}({body}) }}}}\n"
 
 
-def raw_vault_models(vault, contracts):
-    """Devuelve {nombre_modelo: (sql, tests)}."""
+def hub_models(vault):
     models = {}
-    for name, h in vault["hubs"].items():
+    for name, hub in vault["hubs"].items():
         pk = hash_name(name)
-        models[name] = (render("hub", [("src_pk", pk), ("src_nk", upper(h["key"]))], h["source"]),
-                        {"columns": [{"name": pk, "tests": ["unique", "not_null"]}]})
-    for name, l in vault["links"].items():
-        pk, fks = hash_name(name), [hash_name(h) for h in l["hubs"]]
-        args = [("src_pk", pk), ("src_fk", fks)]
-        if l.get("child_key"):
-            args.append(("src_extra_columns", [c.upper() for c in l["child_key"]]))
-        tests = [{"name": pk, "tests": ["unique", "not_null"]}] + [
-            {"name": hash_name(h), "tests": [{"relationships": {"arguments": {"to": f"ref('{h}')", "field": hash_name(h)}}}]}
-            for h in l["hubs"]]
-        models[name] = (render("link", args, l["source"]), {"columns": tests})
-    for name, s in vault["satellites"].items():
-        columns = [c["name"] for c in contracts[s["source"]]["columns"]]
-        pk = hash_name(s["parent"])
-        args = [("src_pk", pk), ("src_hashdiff", f"{s['source'].upper()}_HASHDIFF"),
-                ("src_payload", [c.upper() for c in payload_columns(s, vault, columns)])]
-        models[name] = (render("sat", args, s["source"]), {
-            "columns": [{"name": pk, "tests": ["not_null",
-                         {"relationships": {"arguments": {"to": f"ref('{s['parent']}')", "field": pk}}}]}],
-            "tests": [{"dbt_utils.unique_combination_of_columns": {"arguments": {"combination_of_columns": [pk, "LOAD_DATETIME"]}}}]})
-    for name, r in vault.get("reference_tables", {}).items():
-        attrs = [c["name"] for c in contracts[r["source"]]["columns"] if c["name"] not in r["key"]]
-        key = [{"name": c.upper(), "tests": ["unique", "not_null"]} for c in r["key"]]
-        args = [("src_pk", upper(r["key"])), ("src_extra_columns", [c.upper() for c in attrs])]
-        models[name] = (render("ref_table", args, r["source"]), {"columns": key})
+        sql = render("hub", [("src_pk", pk), ("src_nk", upper(hub["key"]))], hub["source"])
+        tests = {"columns": [{"name": pk, "tests": ["unique", "not_null"]}]}
+        models[name] = (sql, tests)
     return models
 
 
-def reference_table_tests(vault, contracts):
-    """{nombre_fichero: sql}. ref_table no actualiza códigos ya cargados: este test detecta
-    cualquier código del staging ausente o con atributos distintos en la tabla de referencia."""
+def link_models(vault):
+    models = {}
+    for name, link in vault["links"].items():
+        pk = hash_name(name)
+        fks = [hash_name(hub) for hub in link["hubs"]]
+        args = [("src_pk", pk), ("src_fk", fks)]
+        if link.get("child_key"):
+            args.append(("src_extra_columns", [c.upper() for c in link["child_key"]]))
+
+        # Tests: la clave del link es única y cada clave de hub existe en su hub
+        columns = [{"name": pk, "tests": ["unique", "not_null"]}]
+        for hub in link["hubs"]:
+            relation = {"relationships": {"arguments": {"to": f"ref('{hub}')", "field": hash_name(hub)}}}
+            columns.append({"name": hash_name(hub), "tests": [relation]})
+        models[name] = (render("link", args, link["source"]), {"columns": columns})
+    return models
+
+
+def sat_models(vault, contracts):
+    models = {}
+    for name, sat in vault["satellites"].items():
+        columns = [c["name"] for c in contracts[sat["source"]]["columns"]]
+        pk = hash_name(sat["parent"])
+        args = [("src_pk", pk),
+                ("src_hashdiff", f"{sat['source'].upper()}_HASHDIFF"),
+                ("src_payload", [c.upper() for c in payload_columns(sat, vault, columns)])]
+
+        # Tests: la clave existe en el padre y no se repite la misma versión
+        parent_exists = {"relationships": {"arguments": {"to": f"ref('{sat['parent']}')", "field": pk}}}
+        no_repeats = {"dbt_utils.unique_combination_of_columns":
+                      {"arguments": {"combination_of_columns": [pk, "LOAD_DATETIME"]}}}
+        tests = {"columns": [{"name": pk, "tests": ["not_null", parent_exists]}], "tests": [no_repeats]}
+        models[name] = (render("sat", args, sat["source"]), tests)
+    return models
+
+
+def reference_models(vault, contracts):
+    models = {}
+    for name, ref in vault.get("reference_tables", {}).items():
+        attributes = [c["name"] for c in contracts[ref["source"]]["columns"] if c["name"] not in ref["key"]]
+        args = [("src_pk", upper(ref["key"])), ("src_extra_columns", [c.upper() for c in attributes])]
+        key_tests = [{"name": c.upper(), "tests": ["unique", "not_null"]} for c in ref["key"]]
+        models[name] = (render("ref_table", args, ref["source"]), {"columns": key_tests})
+    return models
+
+
+def reference_tests(vault, contracts):
+    """Un test por tabla de referencia: devuelve los códigos del staging que faltan en la tabla
+    o que tienen otros valores (ref_table no actualiza los códigos que ya tiene)."""
     tests = {}
-    for name, r in vault.get("reference_tables", {}).items():
-        cols = [c["name"].upper() for c in contracts[r["source"]]["columns"]]
-        key = [c.upper() for c in r["key"]]
+    for name, ref in vault.get("reference_tables", {}).items():
+        all_columns = [c["name"].upper() for c in contracts[ref["source"]]["columns"]]
+        key = [c.upper() for c in ref["key"]]
         join = " and ".join(f"r.{c} = s.{c}" for c in key)
-        diff = "\n   or ".join(f"r.{c} is distinct from s.{c}" for c in cols if c not in key)
+        different = "\n   or ".join(f"r.{c} is distinct from s.{c}" for c in all_columns if c not in key)
         tests[f"{name}_matches_staging.sql"] = (
-            f"{HEADER}select s.{key[0]}\nfrom {{{{ ref('stg_{r['source']}') }}}} s\n"
+            f"{HEADER}select s.{key[0]}\nfrom {{{{ ref('stg_{ref['source']}') }}}} s\n"
             f"left join {{{{ ref('{name}') }}}} r on {join}\n"
-            f"where r.{key[0]} is null\n   or {diff}\n")
+            f"where r.{key[0]} is null\n   or {different}\n")
     return tests
 
 
 def check(vault, contracts):
+    """Comprueba que los metadatos son coherentes antes de generar nada."""
     refs = vault.get("reference_tables", {})
-    for name, o in {**vault["hubs"], **vault["links"], **vault["satellites"], **refs}.items():
-        if o["source"] not in contracts:
-            raise SystemExit(f"{name}: la entidad '{o['source']}' no tiene contrato")
-    for name, r in refs.items():
-        missing = set(r["key"]) - set(c["name"] for c in contracts[r["source"]]["columns"])
+    for name, obj in {**vault["hubs"], **vault["links"], **vault["satellites"], **refs}.items():
+        if obj["source"] not in contracts:
+            raise SystemExit(f"{name}: la entidad '{obj['source']}' no tiene contrato")
+    for name, ref in refs.items():
+        missing = set(ref["key"]) - set(c["name"] for c in contracts[ref["source"]]["columns"])
         if missing:
             raise SystemExit(f"{name}: columnas clave inexistentes {sorted(missing)}")
-    for name, l in vault["links"].items():
-        for hub, cols in l["hubs"].items():
+    for name, link in vault["links"].items():
+        for hub, cols in link["hubs"].items():
             if hub not in vault["hubs"]:
                 raise SystemExit(f"{name}: el hub '{hub}' no existe")
-            missing = set(cols) - set(c["name"] for c in contracts[l["source"]]["columns"])
+            missing = set(cols) - set(c["name"] for c in contracts[link["source"]]["columns"])
             if missing:
                 raise SystemExit(f"{name}: columnas inexistentes {sorted(missing)}")
 
 
+def empty_folder(folder, pattern="*"):
+    """Crea la carpeta si no existe y borra lo que había generado antes."""
+    folder.mkdir(parents=True, exist_ok=True)
+    for old in folder.glob(pattern):
+        old.unlink()
+
+
 def main():
-    meta = ROOT / "metadata"
-    contracts = {p.stem: yaml.safe_load(p.read_text(encoding="utf-8"))
-                 for p in sorted((meta / "ingestion" / "contracts").glob("*.yml"))}
-    vault = yaml.safe_load((meta / "vault" / "vault.yml").read_text(encoding="utf-8"))
+    metadata_dir = ROOT / "metadata"
+    contract_files = sorted((metadata_dir / "ingestion" / "contracts").glob("*.yml"))
+    contracts = {p.stem: yaml.safe_load(p.read_text(encoding="utf-8")) for p in contract_files}
+    vault = yaml.safe_load((metadata_dir / "vault" / "vault.yml").read_text(encoding="utf-8"))
     check(vault, contracts)
 
-    OUT.mkdir(parents=True, exist_ok=True)
-    for old in OUT.glob("*"):
-        old.unlink()                                  # el directorio es 100 % generado
-
-    for entity, c in contracts.items():
-        columns = [col["name"] for col in c["columns"]]
+    # Staging: una vista por contrato
+    empty_folder(STAGING_DIR)
+    for entity, contract in contracts.items():
+        columns = [c["name"] for c in contract["columns"]]
         metadata = {
-            "source_model": {"landing": c["target"]["landing_table"]},
+            "source_model": {"landing": contract["target"]["landing_table"]},
             "derived_columns": {
                 "RECORD_SOURCE": "_SOURCE_FILE",
-                # _period YYYYMM -> último día del mes (fecha reproducible del lote)
+                # El periodo YYYYMM pasa a ser el último día de ese mes
                 "LOAD_DATETIME": "LAST_DAY(TO_DATE(_PERIOD || '01', 'YYYYMMDD'))",
             },
             "hashed_columns": hashed_columns(entity, vault, columns),
         }
         text = yaml.safe_dump(metadata, sort_keys=False, default_flow_style=None, width=100)
-        (OUT / f"stg_{entity}.sql").write_text(TEMPLATE.format(metadata=text), encoding="utf-8")
+        (STAGING_DIR / f"stg_{entity}.sql").write_text(STAGING_TEMPLATE.format(metadata=text), encoding="utf-8")
 
     sources = {"version": 2, "sources": [{
         "name": "landing", "schema": "LANDING",
         "tables": [{"name": c["target"]["landing_table"]} for c in contracts.values()]}]}
-    (OUT / "_sources.yml").write_text(yaml.safe_dump(sources, sort_keys=False), encoding="utf-8")
-    print(f"Generados {len(contracts)} modelos de staging en {OUT}")
+    (STAGING_DIR / "_sources.yml").write_text(yaml.safe_dump(sources, sort_keys=False), encoding="utf-8")
+    print(f"Generados {len(contracts)} modelos de staging en {STAGING_DIR}")
 
-    RV.mkdir(parents=True, exist_ok=True)
-    for old in RV.glob("*"):
-        old.unlink()
-    models = raw_vault_models(vault, contracts)
+    # Raw Vault: hubs, links, satélites y tablas de referencia
+    models = {**hub_models(vault), **link_models(vault), **sat_models(vault, contracts), **reference_models(vault, contracts)}
+    empty_folder(RAW_VAULT_DIR)
     for name, (sql, _) in models.items():
-        (RV / f"{name}.sql").write_text(sql, encoding="utf-8")
-    schema = {"version": 2, "models": [{"name": n, **tests} for n, (_, tests) in models.items()]}
-    (RV / "_raw_vault.yml").write_text(yaml.safe_dump(schema, sort_keys=False), encoding="utf-8")
-    print(f"Generados {len(models)} modelos de raw vault en {RV}")
+        (RAW_VAULT_DIR / f"{name}.sql").write_text(sql, encoding="utf-8")
+    schema = {"version": 2, "models": [{"name": name, **tests} for name, (_, tests) in models.items()]}
+    (RAW_VAULT_DIR / "_raw_vault.yml").write_text(yaml.safe_dump(schema, sort_keys=False), encoding="utf-8")
+    print(f"Generados {len(models)} modelos de raw vault en {RAW_VAULT_DIR}")
 
-    TESTS.mkdir(parents=True, exist_ok=True)
-    for old in TESTS.glob("*_matches_staging.sql"):
-        old.unlink()
-    for fname, sql in reference_table_tests(vault, contracts).items():
-        (TESTS / fname).write_text(sql, encoding="utf-8")
+    # Tests de las tablas de referencia
+    empty_folder(TESTS_DIR, "*_matches_staging.sql")
+    for file_name, sql in reference_tests(vault, contracts).items():
+        (TESTS_DIR / file_name).write_text(sql, encoding="utf-8")
 
 
 if __name__ == "__main__":

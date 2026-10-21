@@ -1,10 +1,7 @@
-# Orígenes de los datos. Cada contrato nombra el suyo en `source.name`; `type` elige el extractor (registro
-# EXTRACTORS de landing/extract.py) y el resto de claves son los parámetros de ese extractor. Cambiar de origen
-# (S3, SharePoint, una API...) es añadir un extractor y declarar aquí un origen con su type: contratos, carga y
-# dbt no cambian.
+# Orígenes de los datos. Cada contrato dice el suyo en `source.name`
+# y `type` elige la función de landing/extract.py que trae el fichero.
 sources:
   local_csv:
     type: local_folder
-    # Una carpeta por periodo (YYYYMM) con un fichero por entidad. `{period}` marca la parte de la ruta que es el
-    # periodo: los periodos disponibles son las carpetas que ocupen ese lugar. Solo aplica a este type.
+    # Una carpeta por periodo (YYYYMM). `{period}` es el sitio donde va el periodo.
     directory: "data/{period}"

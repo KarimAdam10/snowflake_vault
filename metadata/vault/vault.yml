@@ -1,14 +1,12 @@
-# Metadatos del Data Vault. Fuente de verdad del modelo; de aquí se generan los modelos dbt.
-# Los nombres de columna son los de los contratos de ingesta (metadata/ingestion/contracts/<entidad>.yml).
+# Modelo del Raw Vault. De aquí se generan los modelos de dbt.
+# Los nombres de columna son los de los contratos (metadata/ingestion/contracts).
 #
-#   hubs:             una clave de negocio.        hub_x: {source: <entidad>, key: [columnas]}
-#   links:            relación entre hubs.         lnk_x: {source: <entidad>, hubs: {hub: [columnas fk]}, child_key: [...]}
-#   satellites:       atributos con historial.     sat_x: {parent: <hub|link>, source: <entidad>}
-#                     payload = columnas de la entidad que no son claves ni fk.
-#   reference_tables: catálogos de códigos.        ref_x: {source: <entidad>, key: [columnas]}
-#                     sin hash key ni satélite; guarda la primera versión de cada código.
-# Regla: una entidad alimenta como mucho un satélite.
-# Decisión: docs/decision_reference_tables.md (nation y region son catálogos, no entidades de negocio).
+#   hubs:             una clave de negocio
+#   links:            relación entre hubs (child_key = clave que identifica la fila dentro del link)
+#   satellites:       atributos con historia; cuelgan de un hub o de un link
+#   reference_tables: catálogos de códigos, sin historia
+#
+# Una entidad alimenta como mucho un satélite.
 
 hubs:
   hub_customer: {source: customer, key: [c_custkey]}
@@ -26,11 +24,11 @@ links:
   lnk_lineitem:
     source: lineitem
     hubs: {hub_order: [l_orderkey], hub_part: [l_partkey], hub_supplier: [l_suppkey]}
-    child_key: [l_linenumber]      # clave hija: identifica la línea dentro del pedido
+    child_key: [l_linenumber]
 
 satellites:
-  sat_customer:      {parent: hub_customer, source: customer}   # incluye c_nationkey como atributo
-  sat_supplier:      {parent: hub_supplier, source: supplier}   # incluye s_nationkey como atributo
+  sat_customer:      {parent: hub_customer, source: customer}
+  sat_supplier:      {parent: hub_supplier, source: supplier}
   sat_part:          {parent: hub_part,     source: part}
   sat_order:         {parent: hub_order,    source: orders}
   sat_lnk_partsupp:  {parent: lnk_partsupp, source: partsupp}
@@ -38,4 +36,4 @@ satellites:
 
 reference_tables:
   ref_region: {source: region, key: [r_regionkey]}
-  ref_nation: {source: nation, key: [n_nationkey]}   # n_regionkey es un atributo más
+  ref_nation: {source: nation, key: [n_nationkey]}

@@ -1,28 +1,12 @@
-"""Extrae y carga a LANDING (Snowflake) los datos de cada entidad.
-
-El contrato de cada entidad (metadata/ingestion/contracts/<entidad>.yml) dice qué dato interesa y de qué origen sale
-(`source.name`); metadata/ingestion/source.yml define esos orígenes (su `type` elige el extractor).
-
-Carga de una entidad (`load`):
-  1. extract: el extractor del origen deja disponible el fichero de la entidad para el periodo
-  2. crear stage y tabla de landing si no existen (el esquema LANDING lo crea snowflake/02_database.sql)
-  3. borrar lo que corresponda según load.type (snapshot: todo; incremental: solo el periodo; relanzar no duplica)
-  4. PUT del CSV al stage y COPY INTO la tabla, añadiendo columnas técnicas
-"""
-
+"""Carga a LANDING (Snowflake) el fichero de una entidad, según su contrato."""
 import yaml
 
-from landing.extract import ROOT, get_extractor
+from landing.extract import ROOT, get_file
 
-METADATA_DIR = ROOT / "metadata"
-CONTRACTS_DIR = METADATA_DIR / "ingestion" / "contracts"
-PIPELINE_FILE = METADATA_DIR / "orchestration" / "pipeline.yml"
-
-SCHEMA = "LANDING"
-STAGE = f"{SCHEMA}.STG_INGEST"
+CONTRACTS_DIR = ROOT / "metadata" / "ingestion" / "contracts"
+STAGE = "LANDING.STG_INGEST"
 
 
-# ---- metadatos ----
 def list_entities():
     return sorted(p.stem for p in CONTRACTS_DIR.glob("*.yml"))
 
@@ -34,35 +18,35 @@ def load_contract(entity):
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
-def load_pipeline_config():
-    return yaml.safe_load(PIPELINE_FILE.read_text(encoding="utf-8"))
-
-
-# ---- carga a Snowflake ----
 def load(conn, cur, entity, period, full_refresh=False):
-    """Extrae la entidad de su origen y la carga a LANDING; devuelve el nº de filas cargadas. `cur` es un cursor de Snowflake."""
+    """Carga la entidad en su tabla de landing y devuelve cuántas filas ha cargado."""
     contract = load_contract(entity)
-    src, ext = get_extractor(contract["source"]["name"])
-    with ext["extract"](src, contract["source"], period) as path:
-        return _load_file(conn, cur, contract, path, period, full_refresh)
+    path = get_file(contract, period)
 
-
-def _load_file(conn, cur, contract, path, period, full_refresh):
-    entity = contract["entity"]
-    table = f"{SCHEMA}.{contract['target']['landing_table']}"
+    table = "LANDING." + contract["target"]["landing_table"]
     stage_path = f"@{STAGE}/{period}/{entity}/"
     columns = contract["columns"]
 
-    # columnas del CSV + columnas técnicas que añadimos nosotros
+    # Datos del contrato que usamos en el SQL
     column_ddl = ",\n    ".join(f"{c['name']} {c['type']}" for c in columns)
     column_names = ", ".join(c["name"] for c in columns)
-    positional = ", ".join(f"${i}" for i in range(1, len(columns) + 1))
+    positions = ", ".join(f"${i}" for i in range(1, len(columns) + 1))
     delimiter = contract["source"].get("delimiter", ",")
-    fmt = contract["source"].get("format", "csv").lower()
-    if fmt != "csv":
-        raise ValueError(f"{entity}: formato '{fmt}' no soportado (solo csv)")
     skip_header = 1 if contract["source"].get("header", True) else 0
+    if contract["source"].get("format", "csv").lower() != "csv":
+        raise ValueError(f"{entity}: solo se cargan CSV")
 
+    # snapshot: se borra todo. incremental: se borra solo el periodo (así relanzar no duplica).
+    # Con full_refresh se borra todo siempre.
+    load_type = contract["load"]["type"]
+    if load_type == "snapshot" or full_refresh:
+        delete_sql = f"DELETE FROM {table}"
+    elif load_type == "incremental":
+        delete_sql = f"DELETE FROM {table} WHERE _period = '{period}'"
+    else:
+        raise ValueError(f"{entity}: load.type debe ser snapshot o incremental")
+
+    # Stage y tabla (si no existen)
     cur.execute(f"CREATE STAGE IF NOT EXISTS {STAGE}")
     cur.execute(f"""CREATE TABLE IF NOT EXISTS {table} (
         {column_ddl},
@@ -70,33 +54,24 @@ def _load_file(conn, cur, contract, path, period, full_refresh):
         _period VARCHAR
     )""")
 
+    # Subir el fichero al stage
     cur.execute(f"REMOVE {stage_path}")
     cur.execute(f"PUT 'file://{path.as_posix()}' {stage_path} AUTO_COMPRESS = TRUE OVERWRITE = TRUE")
 
-    # Según load.type del contrato (borrado y carga, en una transacción: si algo falla, la tabla queda como estaba):
-    #   snapshot    -> el fichero es el estado completo: se vacía la tabla y queda solo el último lote
-    #   incremental -> el fichero solo trae filas nuevas: se conservan los lotes anteriores y solo se
-    #                  sustituye el del mismo periodo (relanzar no duplica); con full_refresh se parte de cero
-    load_type = contract["load"]["type"]
-    if load_type == "snapshot" or full_refresh:
-        delete_sql = f"DELETE FROM {table}"
-    elif load_type == "incremental":
-        delete_sql = f"DELETE FROM {table} WHERE _period = '{period}'"
-    else:
-        raise ValueError(f"{entity}: load.type '{load_type}' no soportado (snapshot | incremental)")
+    # Borrar y cargar en una transacción: si falla algo, la tabla se queda como estaba
     conn.autocommit(False)
     try:
         cur.execute(delete_sql)
         cur.execute(f"""COPY INTO {table} ({column_names}, _source_file, _period)
-FROM (SELECT {positional}, METADATA$FILENAME, '{period}'
-      FROM {stage_path})
-FILE_FORMAT = (TYPE = CSV FIELD_DELIMITER = '{delimiter}' SKIP_HEADER = {skip_header}
-               FIELD_OPTIONALLY_ENCLOSED_BY = '"')
-ON_ERROR = ABORT_STATEMENT
-FORCE = TRUE""")
-        rows_loaded = sum(row["rows_loaded"] for row in cur.fetchall())
+        FROM (SELECT {positions}, METADATA$FILENAME, '{period}'
+              FROM {stage_path})
+        FILE_FORMAT = (TYPE = CSV FIELD_DELIMITER = '{delimiter}' SKIP_HEADER = {skip_header}
+                       FIELD_OPTIONALLY_ENCLOSED_BY = '"')
+        ON_ERROR = ABORT_STATEMENT
+        FORCE = TRUE""")
+        rows = sum(row["rows_loaded"] for row in cur.fetchall())
         conn.commit()
-        return rows_loaded
+        return rows
     except Exception:
         conn.rollback()
         raise
