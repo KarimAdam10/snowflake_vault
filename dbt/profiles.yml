@@ -10,8 +10,7 @@ dv_snowflake:
       warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE') }}"
       database: "{{ env_var('SNOWFLAKE_DATABASE') }}"
       schema: "{{ env_var('SNOWFLAKE_SCHEMA', 'PUBLIC') }}"
-      # Contraseña o par de claves: el que esté informado en .env (el otro queda vacío)
-      password: "{{ env_var('SNOWFLAKE_PASSWORD', '') }}"
+      # Autenticación por par de claves (sin contraseña)
       private_key_path: "{{ env_var('SNOWFLAKE_PRIVATE_KEY_PATH', '') }}"
       private_key_passphrase: "{{ env_var('SNOWFLAKE_PRIVATE_KEY_PASSPHRASE', '') }}"
       threads: 4

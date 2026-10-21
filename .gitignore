@@ -1,19 +1,14 @@
 # Secretos y entorno (cada clon tiene su .env y nunca se sube)
 .env*
 /keys/
-keys/*
-!keys/.gitkeep
 *.p8
 *.pem
 
 # Herramientas locales
-.venv/
 .idea/
-.pytest_cache/
 
 # Airflow
 airflow/logs/*
-!airflow/logs/.gitkeep
 __pycache__/
 *.pyc
 
@@ -24,6 +19,7 @@ dbt/tests/*_matches_staging.sql
 dbt/target/
 dbt/dbt_packages/
 dbt/logs/
+dbt/.user.yml
 
 # Datos de entrada: no se versionan (los lotes de CSV de data/ se colocan a mano en cada entorno)
 data/

@@ -11,7 +11,7 @@ x-airflow-common: &airflow-common
   image: dv-pipeline-airflow:${AIRFLOW_VERSION:-3.3.2}
   user: "${AIRFLOW_UID:-50000}:0"
   env_file: .env
-  environment: &airflow-env
+  environment:
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
     AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
@@ -29,7 +29,7 @@ x-airflow-common: &airflow-common
     - ./landing:/opt/project/landing
     - ./data:/opt/project/data
     - ./keys:/opt/keys:ro
-  depends_on: &airflow-deps
+  depends_on:
     postgres:
       condition: service_healthy
     airflow-init:
