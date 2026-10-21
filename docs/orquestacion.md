@@ -21,13 +21,11 @@ generate_models ─────────────────────�
 
 | Etapa | Qué hace |
 |---|---|
-| `extract` | Localiza el zip del periodo (`{period}_sample*.zip` en `data/`), lo descomprime en un directorio temporal, comprueba que están los 8 ficheros de los contratos y registra su `sha256` |
-| `landing` | Una tarea por contrato: `CSV → LANDING.LND_*`, sustituyendo el lote anterior (landing = último lote) |
+| `extract` | Localiza el zip del periodo (`{period}_sample*.zip` en `data/`), lo descomprime en un directorio temporal, comprueba que están los 8 ficheros de los contratos |
+| `landing` | Una tarea por contrato: `CSV → LANDING.LND_*`, según `load.type`: `snapshot` sustituye el lote anterior; `incremental` conserva los anteriores y solo sustituye el del mismo periodo |
 | `generate_models` | Regenera los modelos dbt de staging y Raw Vault desde `metadata/vault/vault.yml`: un cambio de metadatos se aplica en la siguiente ejecución sin tocar código (los modelos generados no se versionan en git) |
 | `dbt_*` | `dbt build` de cada capa (modelos y sus tests). Si una capa falla, las siguientes no se ejecutan. Cada etapa excluye las capas posteriores (deducidas de `depends_on`), para que no ejecute tests que dependen de capas aún sin reconstruir |
 | `cleanup` | Borra los ficheros temporales aunque alguna etapa haya fallado |
-
-El otro DAG, `dv_landing_only` (`extract → landing → cleanup`), solo ingiere. Se define en el mismo YAML con otra selección de etapas.
 
 ## Parametrización
 
@@ -46,7 +44,7 @@ Cada ejecución recibe dos parámetros al lanzar el DAG (*Trigger DAG* en la UI 
 |---|---|
 | Añadir o quitar una etapa de un pipeline, o crear otro pipeline | `metadata/orchestration/pipeline.yml` (`stages`, `pipelines`) |
 | Cambiar el orden o las dependencias | `depends_on` en `metadata/orchestration/pipeline.yml` |
-| Cambiar reintentos o timeout de la carga de una entidad | `entities` en `metadata/orchestration/pipeline.yml` |
+| Cambiar reintentos o timeout de la carga de una entidad | `entity_defaults` (para todas) y `entities` (excepciones) en `metadata/orchestration/pipeline.yml` |
 | Cambiar de dónde salen los lotes o el nombre del zip | `metadata/ingestion/source.yml` |
 | Añadir una entidad | su contrato (y su entrada en `metadata/vault/vault.yml`); aparece sola una tarea de carga |
 | Cambiar el Raw Vault | `metadata/vault/vault.yml` |
@@ -63,7 +61,7 @@ Cada ejecución deja constancia en **`CONTROL.PIPELINE_LOG`** (Snowflake), una f
 | `PERIOD` | Periodo procesado |
 | `STAGE`, `OBJECT_NAME` | Etapa y objeto: el zip, cada entidad cargada, cada modelo y test de dbt |
 | `STATUS` | `SUCCESS`, `FAILED`, `PASS`, `ERROR`... según el origen |
-| `ROWS_AFFECTED`, `DURATION_SECONDS`, `MESSAGE` | Filas, duración y mensaje (por ejemplo, el `sha256` del zip) |
+| `ROWS_AFFECTED`, `DURATION_SECONDS`, `MESSAGE` | Filas, duración y mensaje (por ejemplo, el nombre del zip) |
 
 Ejemplo de consulta: filas cargadas por entidad en cada ejecución.
 
@@ -113,7 +111,6 @@ airflow dags trigger dv_end_to_end --conf '{"period": "202601", "full_refresh": 
 
 ## Límites conocidos
 
-- **`dv_landing_only` no actualiza el vault:** sustituye la landing y se detiene. Si se ejecuta con un periodo y luego con otro sin pasar por dbt, el primero no llega nunca al vault. Úsalo solo para ingerir.
 - **Orden de los lotes:** el vault asume que los lotes llegan en orden cronológico. Procesar `202512` después de `202601` sin `full_refresh` rompe el historial (por eso los tests de unicidad de los satélites fallarían).
 - **Ficheros temporales en el disco del contenedor** (`/tmp/dv_pipeline`): vale con un único ejecutor local. En una arquitectura distribuida, el zip y los CSV extraídos irían a un almacenamiento compartido (bucket) o directamente a un stage de Snowflake.
-- **`load.type`** (`snapshot` | `incremental`) tiene hoy un único efecto real: una entidad `snapshot` con cero filas hace fallar la carga. No cambia cómo se carga ni cómo se procesa en el vault.
+- **`load.type`** (`snapshot` | `incremental`) decide cómo se carga LANDING: `snapshot` sustituye todo el contenido (y falla si llega con cero filas); `incremental` conserva los lotes anteriores y solo sustituye el del mismo periodo (con `full_refresh` se parte de cero). No cambia el staging ni el vault: la detección de borrados que aprovecharía la diferencia está en [mejoras_futuras.md](mejoras_futuras.md).

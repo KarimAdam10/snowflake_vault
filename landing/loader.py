@@ -8,13 +8,11 @@ Flujo de un lote:
   2. check_contents: comprobar que está el fichero de cada contrato
   3. run (por entidad):
        crear stage y tabla de landing si no existen (el esquema LANDING lo crea snowflake/02_database.sql)
-       vaciar la tabla (landing = último lote; relanzar no duplica)
+       borrar lo que corresponda según load.type (snapshot: todo; incremental: solo el periodo; relanzar no duplica)
        PUT del CSV al stage y COPY INTO la tabla, añadiendo columnas técnicas
 """
-import hashlib
 import os
 import re
-import uuid
 import zipfile
 from pathlib import Path
 
@@ -69,14 +67,6 @@ def find_archive(period):
     return matches[0]
 
 
-def file_checksum(path):
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
 def extract_archive(period, dest):
     """Extrae el zip del periodo en `dest` (solo el nombre de cada fichero: evita zip-slip)."""
     archive = find_archive(period)
@@ -111,7 +101,7 @@ def check_contents(workdir):
 
 
 # ---- carga a Snowflake ----
-def run(conn, cur, entity, period, workdir):
+def run(conn, cur, entity, period, workdir, full_refresh=False):
     """Ejecuta la carga y devuelve el nº de filas cargadas. `cur` es un cursor de Snowflake."""
     contract = load_contract(entity)
     path = find_source_file(contract, workdir)
@@ -125,29 +115,39 @@ def run(conn, cur, entity, period, workdir):
     column_names = ", ".join(c["name"] for c in columns)
     positional = ", ".join(f"${i}" for i in range(1, len(columns) + 1))
     delimiter = contract["source"].get("delimiter", ",")
+    fmt = contract["source"].get("format", "csv").lower()
+    if fmt != "csv":
+        raise ValueError(f"{entity}: formato '{fmt}' no soportado (solo csv)")
+    skip_header = 1 if contract["source"].get("header", True) else 0
 
     cur.execute(f"CREATE STAGE IF NOT EXISTS {STAGE}")
     cur.execute(f"""CREATE TABLE IF NOT EXISTS {table} (
         {column_ddl},
-        _load_id VARCHAR,
-        _load_ts TIMESTAMP_NTZ DEFAULT SYSDATE(),
         _source_file VARCHAR,
-        _source_row NUMBER,
         _period VARCHAR
     )""")
 
     cur.execute(f"REMOVE {stage_path}")
     cur.execute(f"PUT 'file://{path.as_posix()}' {stage_path} AUTO_COMPRESS = TRUE OVERWRITE = TRUE")
 
-    # LANDING guarda solo el último lote: se vacía la tabla y se carga el nuevo, en una
-    # transacción (si algo falla, la tabla queda como estaba). El histórico vive en el vault.
+    # Según load.type del contrato (borrado y carga, en una transacción: si algo falla, la tabla queda como estaba):
+    #   snapshot    -> el fichero es el estado completo: se vacía la tabla y queda solo el último lote
+    #   incremental -> el fichero solo trae filas nuevas: se conservan los lotes anteriores y solo se
+    #                  sustituye el del mismo periodo (relanzar no duplica); con full_refresh se parte de cero
+    load_type = contract["load"]["type"]
+    if load_type == "snapshot" or full_refresh:
+        delete_sql = f"DELETE FROM {table}"
+    elif load_type == "incremental":
+        delete_sql = f"DELETE FROM {table} WHERE _period = '{period}'"
+    else:
+        raise ValueError(f"{entity}: load.type '{load_type}' no soportado (snapshot | incremental)")
     conn.autocommit(False)
     try:
-        cur.execute(f"DELETE FROM {table}")
-        cur.execute(f"""COPY INTO {table} ({column_names}, _load_id, _source_file, _source_row, _period)
-FROM (SELECT {positional}, '{uuid.uuid4()}', METADATA$FILENAME, METADATA$FILE_ROW_NUMBER, '{period}'
+        cur.execute(delete_sql)
+        cur.execute(f"""COPY INTO {table} ({column_names}, _source_file, _period)
+FROM (SELECT {positional}, METADATA$FILENAME, '{period}'
       FROM {stage_path})
-FILE_FORMAT = (TYPE = CSV FIELD_DELIMITER = '{delimiter}' SKIP_HEADER = 1
+FILE_FORMAT = (TYPE = CSV FIELD_DELIMITER = '{delimiter}' SKIP_HEADER = {skip_header}
                FIELD_OPTIONALLY_ENCLOSED_BY = '"')
 ON_ERROR = ABORT_STATEMENT
 FORCE = TRUE""")

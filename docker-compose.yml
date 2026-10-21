@@ -28,7 +28,6 @@ x-airflow-common: &airflow-common
     - ./metadata:/opt/project/metadata
     - ./landing:/opt/project/landing
     - ./data:/opt/project/data
-    - ./snowflake:/opt/project/snowflake
     - ./keys:/opt/keys:ro
   depends_on: &airflow-deps
     postgres:

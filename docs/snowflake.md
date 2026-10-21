@@ -86,12 +86,8 @@ Cada uno tiene un **monitor de recursos** (10 créditos al mes: aviso al 75 % y 
 
 ## Demostración de roles
 
-Dos scripts en [`snowflake/`](../snowflake) para enseñar el aislamiento sin escribir nada a mano:
+Una hoja en [`snowflake/`](../snowflake) para enseñar el aislamiento de los roles sin escribir nada a mano:
 
-- **`demo_roles.py`: la identidad del pipeline.** Se ejecuta dentro del contenedor de cada entorno y prueba, con el usuario de servicio real, lo que puede y lo que no puede hacer (leer su base de datos, intentar leer la del otro entorno, crear esquemas, usuarios o warehouses...), mostrando el error de Snowflake en cada rechazo:
-  ```
-  docker compose exec airflow-scheduler python /opt/project/snowflake/demo_roles.py
-  ```
 - **`demo_roles.sql`: las personas.** Hoja para Snowsight con los roles `DV_DEVELOPER`, `DV_ETL_DEV` y `DV_READER_PROD`, cada sentencia con su resultado esperado, más los `SHOW GRANTS` que enseñan qué tiene concedido cada rol.
 
 ## Cómo comprobar el aislamiento

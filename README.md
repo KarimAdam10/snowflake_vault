@@ -19,7 +19,7 @@ Orquestado por Airflow · transformado por dbt (+ AutomateDV) · trazado en CONT
 
 | Capa (esquema Snowflake) | Qué contiene | Cómo se construye |
 |---|---|---|
-| `LANDING` | Un CSV por entidad, tal cual, más columnas técnicas (`_load_id`, `_period`, `_source_file`...). **Solo el último lote**: cada carga sustituye a la anterior | `landing/` (Python), dirigido por los contratos de `metadata/ingestion/` |
+| `LANDING` | Un CSV por entidad, tal cual, más dos columnas técnicas (`_period` y `_source_file`). Según `load.type`: `snapshot` guarda solo el último lote (cada carga sustituye a la anterior); `incremental` acumula los lotes | `landing/` (Python), dirigido por los contratos de `metadata/ingestion/` |
 | `STAGING` | 8 vistas (`stg_*`): calculan hash keys, hashdiff, `LOAD_DATETIME` y `RECORD_SOURCE` | dbt + `automate_dv.stage`, **generadas** desde `vault.yml` |
 | `RAW_VAULT` | 15 objetos: 4 hubs, 3 links, 6 satélites, 2 tablas de referencia. Aquí vive el **histórico** | dbt + AutomateDV, **generados** desde `vault.yml` |
 | `BUSINESS_VAULT` | 1 vista: `bsat_lineitem` (reglas de negocio de la línea de pedido) | modelo SQL escrito a mano |
@@ -32,7 +32,7 @@ Orquestado por Airflow · transformado por dbt (+ AutomateDV) · trazado en CONT
 airflow/dags/
   dv_pipelines.py      Factoría: genera los DAGs de Airflow desde metadata/orchestration/pipeline.yml
   dv_lib/              Qué ejecuta cada etapa (tasks.py) y cómo se registra en CONTROL (audit.py)
-landing/               Ingesta genérica zip -> LANDING (loader.py, main.py para uso por CLI, snowflake_conn.py)
+landing/               Ingesta genérica zip -> LANDING (loader.py, snowflake_conn.py)
 metadata/              Todos los metadatos, una carpeta por tema
   ingestion/             contracts/<entidad>.yml (fichero, columnas, tipos, tipo de carga) y source.yml (dónde está el zip)
   vault/                 vault.yml (hubs, links, satélites y tablas de referencia del Raw Vault)
@@ -116,7 +116,7 @@ Los DAGs nacen pausados. Deja los zips en `data/` y, en la UI de Airflow, activa
 1. `period = 202512` y `full_refresh = true` (reconstruye el vault desde cero).
 2. Cuando termine, `period = 202601` y `full_refresh = false`.
 
-Solo ingesta (sin transformar): `dv_landing_only`. Detalle de etapas, parámetros y trazabilidad en [orquestacion.md](docs/orquestacion.md).
+Detalle de etapas, parámetros y trazabilidad en [orquestacion.md](docs/orquestacion.md).
 
 Staging y Raw Vault se regeneran en cada ejecución desde `vault.yml` (etapa `generate_models`) y **no se versionan en git** (están en `.gitignore`): lo que se versiona son los metadatos. A mano, dentro del contenedor:
 
@@ -151,12 +151,16 @@ Se ejecutó el flujo real con los dos zips y se comprobó que **todo coincide co
 | [business_vault_y_mart.md](docs/business_vault_y_mart.md) | Business Vault, estrella del mart, decisiones de modelado y verificación |
 | [decision_staging.md](docs/decision_staging.md) | Por qué existe la capa de staging y la alternativa sin ella |
 | [decision_reference_tables.md](docs/decision_reference_tables.md) | Por qué `nation` y `region` son tablas de referencia y no hubs |
+| [arquitectura_referencia_propuestas.md](docs/arquitectura_referencia_propuestas.md) | Tres alternativas de arquitectura de referencia en cloud (AWS, Azure, Google Cloud), explicadas como traducción de la demo |
+| [guion_presentacion.md](docs/guion_presentacion.md) | Guion de la presentación y de la demo (el PowerPoint está en `docs/presentacion_pipeline_data_vault.pptx`) |
+| [uso_de_ia.md](docs/uso_de_ia.md) | Cómo se usó la IA y prompts representativos |
+| [dbt.md](docs/dbt.md) | Guía de dbt aplicada al proyecto: modelos, materializaciones, Jinja, ejecución y pruebas |
 | [snowflake.md](docs/snowflake.md) | Diseño de Snowflake: objetos, roles y permisos, warehouses, justificación y cómo verificar el aislamiento |
 | [cicd.md](docs/cicd.md) | Flujo de trabajo dev → prod: ramas, pull requests, CI, configuración de GitHub y alta de los entornos |
 
 ## Límites conocidos
 
-- **Orden de los lotes:** el vault asume lotes en orden cronológico. Procesar un periodo anterior sin `full_refresh` rompe el historial. `dv_landing_only` sustituye la landing sin actualizar el vault: úsalo solo para ingerir.
+- **Orden de los lotes:** el vault asume lotes en orden cronológico. Procesar un periodo anterior sin `full_refresh` rompe el historial.
 - **`ref_table` conserva la primera versión** de cada código; un test compara cada tabla de referencia con su staging y falla si divergen.
 - **`load.type`** (`snapshot`/`incremental`) casi no tiene efecto: solo hace fallar una entidad `snapshot` con cero filas.
 - **Cada hub se carga desde una sola entidad.** Con estos datos no hay claves huérfanas (se comprobó); con otros, habría que cargar el hub desde todas las fuentes que traen la clave.
