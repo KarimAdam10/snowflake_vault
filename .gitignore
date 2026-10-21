@@ -1,5 +1,6 @@
 # Secretos y entorno (cada clon tiene su .env y nunca se sube)
 .env*
+/keys/
 keys/*
 !keys/.gitkeep
 *.p8
