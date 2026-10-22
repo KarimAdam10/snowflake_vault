@@ -1,0 +1,21 @@
+entity: inspection
+source:
+  name: local_csv
+  file_pattern: "inspection.csv"
+  format: csv
+  delimiter: ","
+  header: true
+target:
+  landing_table: LND_INSPECTION
+load:
+  type: incremental            # snapshot | incremental
+columns:
+  - {name: i_inspectionkey,  type: NUMBER}
+  - {name: i_partkey,        type: NUMBER}
+  - {name: i_suppkey,        type: NUMBER}
+  - {name: i_inspectiondate, type: DATE}
+  - {name: i_inspector,      type: VARCHAR}
+  - {name: i_sample_size,    type: NUMBER}
+  - {name: i_defects,        type: NUMBER}
+  - {name: i_result,         type: VARCHAR}
+  - {name: i_comment,        type: VARCHAR}

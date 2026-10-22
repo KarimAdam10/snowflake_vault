@@ -13,6 +13,7 @@ hubs:
   hub_supplier: {source: supplier, key: [s_suppkey]}
   hub_part:     {source: part,     key: [p_partkey]}
   hub_order:    {source: orders,   key: [o_orderkey]}
+  hub_inspection: {source: inspection, key: [i_inspectionkey]}
 
 links:
   lnk_order_customer:
@@ -25,6 +26,9 @@ links:
     source: lineitem
     hubs: {hub_order: [l_orderkey], hub_part: [l_partkey], hub_supplier: [l_suppkey]}
     child_key: [l_linenumber]
+  lnk_inspection_partsupp:
+    source: inspection
+    hubs: {hub_inspection: [i_inspectionkey], hub_part: [i_partkey], hub_supplier: [i_suppkey]}
 
 satellites:
   sat_customer:      {parent: hub_customer, source: customer}
@@ -33,6 +37,7 @@ satellites:
   sat_order:         {parent: hub_order,    source: orders}
   sat_lnk_partsupp:  {parent: lnk_partsupp, source: partsupp}
   sat_lnk_lineitem:  {parent: lnk_lineitem, source: lineitem}
+  sat_inspection:    {parent: hub_inspection, source: inspection}
 
 reference_tables:
   ref_region: {source: region, key: [r_regionkey]}
